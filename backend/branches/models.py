@@ -5,7 +5,13 @@ class Branch(models.Model):
     code = models.CharField(max_length=10, unique=True)
     address = models.TextField()
     phone_number = models.CharField(max_length=15)
-    manager = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True)
+    manager = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='managed_branches',
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
