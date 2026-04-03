@@ -58,6 +58,17 @@ const Products: React.FC = () => {
     items: [{ product_id: "", quantity: "", unit_cost: "" }],
   })
 
+  const canAdjustStock = () => {
+    if (!user) return false
+
+    const userWithMethod = user as unknown as { can_adjust_stock?: () => boolean }
+    if (typeof userWithMethod.can_adjust_stock === "function") {
+      return userWithMethod.can_adjust_stock()
+    }
+
+    return user.role === "super_admin"
+  }
+
   useEffect(() => {
     fetchProducts()
     fetchCategories()
@@ -156,7 +167,7 @@ const Products: React.FC = () => {
   }
 
   const handleAdjustStock = async (productId: number, newQuantity: number, reason: string) => {
-    if (!user?.can_adjust_stock()) {
+    if (!canAdjustStock()) {
       toast.error("You do not have permission to adjust stock")
       return
     }
@@ -255,7 +266,7 @@ const Products: React.FC = () => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <div className="flex space-x-2">
-                    {user?.can_adjust_stock() && (
+                    {canAdjustStock() && (
                       <button
                         onClick={() => {
                           setSelectedProduct(product)
