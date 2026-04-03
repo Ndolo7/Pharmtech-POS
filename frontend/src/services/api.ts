@@ -1,7 +1,8 @@
 import axios from "axios"
 import toast from "react-hot-toast"
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api"
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.REACT_APP_API_URL || "http://localhost:8000"
+const API_BASE_URL = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl.replace(/\/$/, "")}/api`
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -13,9 +14,11 @@ const api = axios.create({
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("access_token")
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("access_token")
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
     }
     return config
   },
@@ -34,22 +37,26 @@ api.interceptors.response.use(
       originalRequest._retry = true
 
       try {
-        const refreshToken = localStorage.getItem("refresh_token")
+        const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null
         if (refreshToken) {
           const response = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
             refresh: refreshToken,
           })
 
           const { access } = response.data
-          localStorage.setItem("access_token", access)
+          if (typeof window !== "undefined") {
+            localStorage.setItem("access_token", access)
+          }
           api.defaults.headers.common["Authorization"] = `Bearer ${access}`
 
           return api(originalRequest)
         }
       } catch (refreshError) {
-        localStorage.removeItem("access_token")
-        localStorage.removeItem("refresh_token")
-        window.location.href = "/login"
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("access_token")
+          localStorage.removeItem("refresh_token")
+          window.location.href = "/login"
+        }
         return Promise.reject(refreshError)
       }
     }
