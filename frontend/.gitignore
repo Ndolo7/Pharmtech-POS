@@ -1,0 +1,9 @@
+# ─── Frontend (Next.js) ──────────────────────────────────────────────────────
+node_modules
+.next/
+out/
+build
+.env.local
+.env*.local
+next-env.d.ts
+*.tsbuildinfo
