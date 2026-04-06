@@ -1,0 +1,88 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-header">
+      <h3>Transfer Stock</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      {% if blocked %}
+      <div class="message message-error">
+        No branch is available for this transfer. Choose a branch from the Stock page or assign one to your user.
+      </div>
+      <div class="modal-footer" style="padding:0;margin-top:16px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Close</button>
+      </div>
+      {% else %}
+      <form method="post"
+        hx-post="{% url 'transfer-stock' %}"
+        hx-swap="none"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
+        {% if active_branch %}
+        <div class="message message-info" style="margin-bottom:12px;max-width:none">
+          Transferring from: <strong>{{ active_branch.name }}</strong>
+        </div>
+        {% endif %}
+
+        <div class="form-group">
+          <label>Destination Branch *</label>
+          {{ form.to_branch }}
+          {% if form.to_branch.errors %}<div class="text-danger text-sm">{{ form.to_branch.errors|striptags }}</div>{% endif %}
+        </div>
+
+        <div class="form-group">
+          <label>Notes</label>
+          {{ form.notes }}
+        </div>
+
+        <div class="flex justify-between items-center mb-2">
+          <label class="font-medium">Items</label>
+          <button type="button" class="btn btn-sm btn-outline" onclick="addTransferRow()">+ Add Item</button>
+        </div>
+
+        <div id="transfer-items-list">
+          <div class="transfer-row" style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:8px">
+            <select name="product_id[]" class="form-input" required>
+              <option value="">Select product</option>
+              {% for p in products %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+            <input type="number" name="quantity[]" class="form-input" min="1" required placeholder="Qty">
+            <button type="button" class="btn btn-sm btn-danger" onclick="removeTransferRow(this)" disabled>✕</button>
+          </div>
+        </div>
+
+        {% if form.errors %}
+        <div class="message message-error">{{ form.errors }}</div>
+        {% endif %}
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Transfer Stock</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if not blocked %}
+<script>
+const transferProductOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
+
+function addTransferRow() {
+  const clone = document.querySelector('.transfer-row').cloneNode(true);
+  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + transferProductOptions;
+  clone.querySelector('input').value = '';
+  clone.querySelector('button').disabled = false;
+  document.getElementById('transfer-items-list').appendChild(clone);
+}
+
+function removeTransferRow(btn) {
+  const rows = document.querySelectorAll('.transfer-row');
+  if (rows.length > 1) btn.closest('.transfer-row').remove();
+}
+</script>
+{% endif %}

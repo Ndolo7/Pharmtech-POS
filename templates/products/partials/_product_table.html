@@ -1,0 +1,24 @@
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th>Category</th>
+        <th>Unit Price</th>
+        <th>Cost Price</th>
+        <th>Stock</th>
+        <th>Reorder Level</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in product_data %}
+      {% include "products/partials/_product_row.html" with p=item.product stock=item.stock %}
+      {% empty %}
+      <tr><td colspan="7">
+        <div class="empty-state">No products found.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

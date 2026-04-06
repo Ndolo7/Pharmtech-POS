@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Branches — Pharmtech POS{% endblock %}
+{% block page_title %}Branches{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <div></div>
+  {% if can_manage_branches %}
+  <button class="btn btn-primary"
+    hx-get="{% url 'branch-create' %}"
+    hx-target="#modal-container"
+    hx-swap="innerHTML">
+    + Add Branch
+  </button>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div id="branch-table-container">
+    {% include "branches/partials/_branch_table.html" %}
+  </div>
+</div>
+
+<div id="modal-container"></div>
+{% endblock %}

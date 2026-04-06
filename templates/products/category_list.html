@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Categories — Pharmtech POS{% endblock %}
+{% block page_title %}Product Categories{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <a class="btn btn-secondary" href="{% url 'product-list' %}">Back to Products</a>
+  <button class="btn btn-primary"
+    hx-get="{% url 'category-create' %}"
+    hx-target="#modal-container"
+    hx-swap="innerHTML">
+    + Add Category
+  </button>
+</div>
+
+<div class="card">
+  <div id="category-table-container">
+    {% include "products/partials/_category_table.html" %}
+  </div>
+</div>
+
+<div id="modal-container"></div>
+{% endblock %}

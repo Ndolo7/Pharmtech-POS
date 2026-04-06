@@ -1,0 +1,59 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Add Branch</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      {% if blocked %}
+      <div class="message message-error">Permission denied.</div>
+      <div class="modal-footer" style="padding:0;margin-top:16px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Close</button>
+      </div>
+      {% else %}
+      <form method="post"
+        hx-post="{% url 'branch-create' %}"
+        hx-target="#branch-table-container"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        <div class="form-group">
+          <label>Branch Name *</label>
+          {{ form.name }}
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Code *</label>
+            {{ form.code }}
+          </div>
+          <div class="form-group">
+            <label>Phone *</label>
+            {{ form.phone_number }}
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Address *</label>
+          {{ form.address }}
+        </div>
+        <div class="form-group">
+          <label>Manager</label>
+          {{ form.manager }}
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px">
+          {{ form.is_active }}
+          <label style="margin:0">Active branch</label>
+        </div>
+
+        {% if form.errors %}
+        <div class="message message-error">{{ form.errors }}</div>
+        {% endif %}
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Branch</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>

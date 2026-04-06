@@ -1,0 +1,37 @@
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Contact Person</th>
+        <th>Phone</th>
+        <th>Email</th>
+        <th>Address</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for supplier in suppliers %}
+      <tr>
+        <td class="font-medium">{{ supplier.name }}</td>
+        <td>{{ supplier.contact_person|default:"-" }}</td>
+        <td>{{ supplier.phone_number|default:"-" }}</td>
+        <td>{{ supplier.email|default:"-" }}</td>
+        <td>{{ supplier.address|default:"-" }}</td>
+        <td>
+          <button class="btn btn-sm btn-outline"
+            hx-get="{% url 'supplier-edit' supplier.pk %}"
+            hx-target="#modal-container"
+            hx-swap="innerHTML">
+            Edit
+          </button>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6"><div class="empty-state">No suppliers found.</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

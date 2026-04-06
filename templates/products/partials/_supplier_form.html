@@ -1,0 +1,53 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-header">
+      <h3>{% if supplier %}Edit Supplier{% else %}Add Supplier{% endif %}</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <form method="post"
+        {% if supplier %}
+          hx-post="{% url 'supplier-edit' supplier.pk %}"
+        {% else %}
+          hx-post="{% url 'supplier-create' %}"
+        {% endif %}
+        hx-target="#supplier-table-container"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+
+        <div class="form-group">
+          <label>Name *</label>
+          {{ form.name }}
+        </div>
+        <div class="form-group">
+          <label>Contact Person</label>
+          {{ form.contact_person }}
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone *</label>
+            {{ form.phone_number }}
+          </div>
+          <div class="form-group">
+            <label>Email *</label>
+            {{ form.email }}
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Address *</label>
+          {{ form.address }}
+        </div>
+
+        {% if form.errors %}
+        <div class="message message-error">{{ form.errors }}</div>
+        {% endif %}
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">{% if supplier %}Save{% else %}Create Supplier{% endif %}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

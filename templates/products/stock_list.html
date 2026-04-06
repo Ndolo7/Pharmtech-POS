@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Stock — Pharmtech POS{% endblock %}
+{% block page_title %}Stock Management{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <div class="flex gap-2 items-center" id="stock-filters">
+    <input type="text" placeholder="Search products..." class="form-input" style="width:260px"
+      hx-get="{% url 'stock-list' %}"
+      hx-target="#stock-table-container"
+      hx-trigger="keyup changed delay:300ms"
+      hx-swap="innerHTML"
+      hx-include="#stock-filters"
+      name="q"
+      value="{{ search }}">
+    {% if can_select_branch %}
+    <select name="branch" class="form-input" style="width:220px"
+      hx-get="{% url 'stock-list' %}"
+      hx-target="#stock-table-container"
+      hx-trigger="change"
+      hx-swap="innerHTML"
+      hx-include="#stock-filters">
+      {% for branch in branch_options %}
+      <option value="{{ branch.id }}" {% if active_branch and branch.id == active_branch.id %}selected{% endif %}>
+        {{ branch.name }}
+      </option>
+      {% endfor %}
+    </select>
+    {% elif active_branch %}
+    <span class="badge badge-primary">Branch: {{ active_branch.name }}</span>
+    {% endif %}
+  </div>
+  <div class="flex gap-2">
+    <button class="btn btn-outline"
+      hx-get="{% url 'transfer-stock' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML">
+      Transfer Stock
+    </button>
+    <button class="btn btn-success"
+      hx-get="{% url 'receive-stock' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML">
+      Receive Stock
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div id="stock-table-container">
+    {% include "products/partials/_product_table.html" %}
+  </div>
+</div>
+
+<div id="modal-container"></div>
+{% endblock %}

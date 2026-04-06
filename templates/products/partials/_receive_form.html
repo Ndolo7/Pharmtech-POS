@@ -1,0 +1,79 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-header">
+      <h3>Receive Stock</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <form method="post"
+        hx-post="{% url 'receive-stock' %}"
+        hx-swap="none"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
+        {% if active_branch %}
+        <div class="message message-info" style="margin-bottom:12px;max-width:none">
+          Receiving stock for: <strong>{{ active_branch.name }}</strong>
+        </div>
+        {% endif %}
+        <div class="form-row">
+          <div class="form-group">
+            <label>Supplier *</label>
+            <select name="supplier_id" class="form-input" required>
+              <option value="">Select supplier</option>
+              {% for s in suppliers %}
+              <option value="{{ s.id }}">{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Invoice Number *</label>
+            <input type="text" name="invoice_number" class="form-input" required placeholder="INV-001">
+          </div>
+        </div>
+
+        <div id="receive-items">
+          <div class="flex justify-between items-center mb-2">
+            <label class="font-medium">Items</label>
+            <button type="button" class="btn btn-sm btn-outline" onclick="addReceiveRow()">+ Add Item</button>
+          </div>
+          <div id="items-list">
+            <div class="receive-row" style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;margin-bottom:8px">
+              <select name="product_id[]" class="form-input" required>
+                <option value="">Select product</option>
+                {% for p in products %}
+                <option value="{{ p.id }}">{{ p.name }}</option>
+                {% endfor %}
+              </select>
+              <input type="number" name="quantity[]" placeholder="Qty" class="form-input" required min="1">
+              <input type="number" name="unit_cost[]" placeholder="Cost" class="form-input" required step="0.01" min="0">
+              <button type="button" class="btn btn-sm btn-danger" onclick="removeReceiveRow(this)" disabled>✕</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-success">Receive Stock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const productOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
+
+function addReceiveRow() {
+  const clone = document.querySelector('.receive-row').cloneNode(true);
+  clone.querySelectorAll('input').forEach(i => i.value = '');
+  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + productOptions;
+  clone.querySelector('button').disabled = false;
+  document.getElementById('items-list').appendChild(clone);
+}
+
+function removeReceiveRow(btn) {
+  const rows = document.querySelectorAll('.receive-row');
+  if (rows.length > 1) btn.closest('.receive-row').remove();
+}
+</script>

@@ -1,0 +1,39 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h3>{% if category %}Edit Category{% else %}Add Category{% endif %}</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <form method="post"
+        {% if category %}
+          hx-post="{% url 'category-edit' category.pk %}"
+        {% else %}
+          hx-post="{% url 'category-create' %}"
+        {% endif %}
+        hx-target="#category-table-container"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+
+        <div class="form-group">
+          <label>Name *</label>
+          {{ form.name }}
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          {{ form.description }}
+        </div>
+
+        {% if form.errors %}
+        <div class="message message-error">{{ form.errors }}</div>
+        {% endif %}
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">{% if category %}Save{% else %}Create Category{% endif %}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

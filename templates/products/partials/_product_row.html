@@ -1,0 +1,38 @@
+<tr id="product-row-{{ p.pk }}"
+  {% if oob %}hx-swap-oob="outerHTML:#product-row-{{ p.pk }}"{% endif %}
+  class="{% if stock <= p.reorder_level %}row-danger{% endif %}">
+  <td>
+    <div class="font-medium">{{ p.name }}</div>
+    {% if p.barcode %}<div class="text-sm text-muted">{{ p.barcode }}</div>{% endif %}
+  </td>
+  <td>{{ p.category.name }}</td>
+  <td>KES {{ p.unit_price|floatformat:2 }}</td>
+  <td>KES {{ p.cost_price|floatformat:2 }}</td>
+  <td>
+    <span class="{% if stock <= 0 %}text-danger font-bold{% elif stock <= p.reorder_level %}text-danger{% endif %}">
+      {{ stock }}
+    </span>
+    {% if stock <= p.reorder_level %}
+    <span class="badge badge-danger text-sm" style="margin-left:4px">Low</span>
+    {% endif %}
+  </td>
+  <td>{{ p.reorder_level }}</td>
+  <td>
+    <div class="flex gap-2">
+      <button class="btn btn-sm btn-outline"
+        hx-get="{% url 'product-edit' p.pk %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML">
+        Edit
+      </button>
+      {% if request.user.is_superuser or request.user.is_staff or request.user.role == "super_admin" %}
+      <button class="btn btn-sm btn-secondary"
+        hx-get="{% url 'adjust-stock' p.pk %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML">
+        Adjust
+      </button>
+      {% endif %}
+    </div>
+  </td>
+</tr>
