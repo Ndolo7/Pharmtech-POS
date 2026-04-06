@@ -1,0 +1,71 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — Pharmtech POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <h1>Pharmtech POS</h1>
+      <p>Sign in to your account to continue</p>
+
+      {% if messages %}
+        {% for msg in messages %}
+          <div class="message message-{{ msg.tags|default:'error' }}" style="margin-bottom:16px">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+
+      <form method="post" action="{% url 'login' %}">
+        {% csrf_token %}
+        <div class="form-group">
+          <label for="id_username">Username</label>
+          {{ form.username }}
+        </div>
+        <div class="form-group">
+          <label for="id_password">Password</label>
+          <div class="password-field">
+            {{ form.password }}
+            <button type="button" class="toggle-password" data-password-target="id_password" aria-label="Show password">Show</button>
+          </div>
+        </div>
+        {% if form.errors %}
+          <p class="text-danger text-sm" style="margin-bottom:12px">Invalid username or password. Please try again.</p>
+        {% endif %}
+        <button type="submit" class="btn btn-primary w-full btn-lg" style="margin-top:4px">Sign In</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    function bindPasswordToggles(root) {
+      const scope = root || document;
+      const toggles = scope.querySelectorAll("[data-password-target]");
+      toggles.forEach((btn) => {
+        if (btn.dataset.bound === "true") return;
+        btn.dataset.bound = "true";
+        btn.addEventListener("click", () => {
+          const targetId = btn.getAttribute("data-password-target");
+          const input = document.getElementById(targetId);
+          if (!input) return;
+          const reveal = input.type === "password";
+          input.type = reveal ? "text" : "password";
+          btn.textContent = reveal ? "Hide" : "Show";
+          btn.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+        });
+      });
+    }
+
+    bindPasswordToggles(document);
+  </script>
+</body>
+</html>

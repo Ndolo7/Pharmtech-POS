@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}My Profile — Pharmtech POS{% endblock %}
+{% block page_title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:760px">
+  <div class="card-header">
+    <h2>Account Details</h2>
+  </div>
+  <div class="card-body">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div class="text-muted text-sm">Username</div>
+        <div class="font-medium">{{ user.username }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Full Name</div>
+        <div class="font-medium">{{ user.get_full_name|default:"-" }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Email</div>
+        <div class="font-medium">{{ user.email|default:"-" }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Phone</div>
+        <div class="font-medium">{{ user.phone_number|default:"-" }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Role</div>
+        <div class="font-medium">{{ user.get_role_display }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Branch</div>
+        <div class="font-medium">{{ user.branch.name|default:"Not assigned" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
