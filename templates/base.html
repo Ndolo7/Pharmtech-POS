@@ -1,0 +1,98 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Pharmtech POS{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  <div class="app-container">
+    {% include "partials/_sidebar.html" %}
+
+    <!-- Main -->
+    <div class="main-content">
+      <div class="topbar">
+        <span class="topbar-title">{% block page_title %}{% endblock %}</span>
+        <div class="flex items-center gap-2">{% include "partials/_shift_status_badge.html" %}</div>
+      </div>
+
+      {% include "partials/_messages.html" %}
+
+      <div class="page-body">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+
+  <!-- HTMX -->
+  <script src="{% static 'vendor/htmx.min.js' %}"></script>
+  <script>
+    if (!window.htmx) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10/dist/htmx.min.js"><\\/script>');
+    }
+  </script>
+  <!-- Alpine.js -->
+  <script defer src="{% static 'vendor/alpine.min.js' %}"></script>
+  <script>
+    if (!window.Alpine) {
+      document.write('<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"><\\/script>');
+    }
+  </script>
+  <script>
+    window.addEventListener("load", function () {
+      if (!window.htmx) {
+        console.error("HTMX failed to load. HTMX actions will not work.");
+      }
+      if (!window.Alpine) {
+        console.error("Alpine.js failed to load. Interactive POS state will not work.");
+      }
+    });
+  </script>
+
+  <script>
+    function scheduleMessageDismiss() {
+      const msgs = document.getElementById("messages");
+      if (!msgs || !msgs.children.length) return;
+      setTimeout(() => {
+        msgs.style.opacity = "0";
+        setTimeout(() => {
+          msgs.innerHTML = "";
+          msgs.style.opacity = "1";
+        }, 400);
+      }, 4000);
+    }
+
+    scheduleMessageDismiss();
+    document.body.addEventListener("htmx:afterSwap", scheduleMessageDismiss);
+  </script>
+  <script>
+    function bindPasswordToggles(root) {
+      const scope = root || document;
+      const toggles = scope.querySelectorAll("[data-password-target]");
+      toggles.forEach((btn) => {
+        if (btn.dataset.bound === "true") return;
+        btn.dataset.bound = "true";
+        btn.addEventListener("click", () => {
+          const targetId = btn.getAttribute("data-password-target");
+          const input = document.getElementById(targetId);
+          if (!input) return;
+          const reveal = input.type === "password";
+          input.type = reveal ? "text" : "password";
+          btn.textContent = reveal ? "Hide" : "Show";
+          btn.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+        });
+      });
+    }
+
+    bindPasswordToggles(document);
+    document.body.addEventListener("htmx:afterSwap", (event) => bindPasswordToggles(event.target));
+  </script>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>
