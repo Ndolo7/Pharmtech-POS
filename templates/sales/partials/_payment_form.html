@@ -1,0 +1,48 @@
+<div class="payment-section" x-show="cart.length > 0">
+  <div class="form-row" style="margin-bottom:10px">
+    <input type="text" placeholder="Customer Name" class="form-input" x-model="customerName">
+    <input type="tel" placeholder="Phone" class="form-input" x-model="customerPhone">
+  </div>
+
+  <div class="payment-methods">
+    <button class="payment-method-btn" :class="paymentMethod==='cash'?'active':''" @click.prevent="paymentMethod='cash'">Cash</button>
+    <button class="payment-method-btn" :class="paymentMethod==='mpesa'?'active':''" @click.prevent="paymentMethod='mpesa'">M-Pesa</button>
+    <button class="payment-method-btn" :class="paymentMethod==='mixed'?'active':''" @click.prevent="paymentMethod='mixed'">Mixed</button>
+  </div>
+
+  <template x-if="paymentMethod==='mixed'">
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group" style="margin:0">
+        <label class="text-sm">Cash Amount</label>
+        <input type="number" class="form-input" x-model="cashAmount" step="0.01" placeholder="0.00">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="text-sm">M-Pesa Amount</label>
+        <input type="number" class="form-input" x-model="mpesaAmount" step="0.01" placeholder="0.00">
+      </div>
+    </div>
+  </template>
+
+  <form id="sale-form"
+    hx-post="{% url 'process-sale' %}"
+    hx-target="#sale-result"
+    hx-swap="innerHTML"
+    hx-on::after-request="onSaleComplete($event)"
+    @submit.prevent="submitSale()">
+    {% csrf_token %}
+    <input type="hidden" name="cart_json" :value="JSON.stringify(cart)">
+    <input type="hidden" name="payment_method" :value="paymentMethod">
+    <input type="hidden" name="cash_amount" :value="cashAmount">
+    <input type="hidden" name="mpesa_amount" :value="mpesaAmount">
+    <input type="hidden" name="customer_name" :value="customerName">
+    <input type="hidden" name="customer_phone" :value="customerPhone">
+
+    <button type="submit"
+      class="btn btn-primary w-full"
+      style="padding:12px;font-size:15px;margin-top:4px"
+      :disabled="cart.length===0 || processing || !shift_active">
+      <span x-show="!processing">Process Sale - KES <span x-text="getTotal().toFixed(2)"></span></span>
+      <span x-show="processing">Processing...</span>
+    </button>
+  </form>
+</div>

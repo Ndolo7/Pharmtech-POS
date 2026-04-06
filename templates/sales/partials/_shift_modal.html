@@ -1,0 +1,63 @@
+<div id="shift-modal-container" {% if oob %}hx-swap-oob="innerHTML"{% endif %}>
+  {% if not shift %}
+  <div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:200">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Start Shift</h3>
+      </div>
+      <div class="modal-body">
+        {% if request.user.branch %}
+          <p class="text-muted text-sm mb-4">You must start a shift before processing sales.</p>
+          <form method="post"
+            hx-post="{% url 'start-shift' %}"
+            hx-target="#current-shift-panel"
+            hx-swap="outerHTML"
+            hx-on::after-request="if(event.detail.successful && document.getElementById('current-shift-panel')?.dataset.shiftActive === '1'){document.getElementById('shift-modal-container').innerHTML='';}">
+            {% csrf_token %}
+            <div class="form-group">
+              <label>Opening Cash Amount (KES)</label>
+              {{ start_form.opening_cash }}
+            </div>
+            <button type="submit" class="btn btn-primary w-full btn-lg">Start Shift</button>
+          </form>
+        {% else %}
+          <div class="message message-error">You are not assigned to any branch. Contact an admin to assign your branch first.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% elif close_form %}
+  <div class="modal-backdrop" x-show="showCloseShift" style="display:none" @click.self="showCloseShift=false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Close Shift</h3>
+      </div>
+      <div class="modal-body">
+        <form method="post"
+          hx-post="{% url 'close-shift' %}"
+          hx-target="#current-shift-panel"
+          hx-swap="outerHTML"
+          hx-on::after-request="if(event.detail.successful){showCloseShift=false;}">
+          {% csrf_token %}
+          <div class="form-group">
+            <label>Closing Cash (KES)</label>
+            {{ close_form.closing_cash }}
+          </div>
+          <div class="form-group">
+            <label>Closing M-Pesa (KES)</label>
+            {{ close_form.closing_mpesa }}
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            {{ close_form.notes }}
+          </div>
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-secondary" @click="showCloseShift=false">Cancel</button>
+            <button type="submit" class="btn btn-danger">Close Shift</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
