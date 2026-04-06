@@ -40,7 +40,10 @@ class User(AbstractUser):
         return f"{self.username} - {self.get_role_display()}"
 
     def can_adjust_stock(self):
-        return self.role == 'super_admin'
+        return self.is_superuser or self.is_staff or self.role == 'super_admin'
 
     def can_manage_users(self):
-        return self.role == 'super_admin'
+        return self.is_superuser or self.is_staff or self.role == 'super_admin'
+
+    def can_manage_branches(self):
+        return self.is_superuser or self.is_staff or self.role == 'super_admin'
