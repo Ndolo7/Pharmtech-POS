@@ -1,0 +1,43 @@
+{% if errors %}
+  <div class="message message-error">{{ errors }}</div>
+{% elif data %}
+  <!-- Summary -->
+  <div class="stats-grid" style="margin-bottom:16px">
+    <div class="stat-card blue">
+      <div class="label">Total Sales</div>
+      <div class="value">KES {{ data.summary.total_amount|default:0|floatformat:0 }}</div>
+      <div class="text-muted text-sm mt-1">{{ data.summary.count }} transactions</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Cash</div>
+      <div class="value">KES {{ data.summary.total_cash|default:0|floatformat:0 }}</div>
+    </div>
+    <div class="stat-card yellow">
+      <div class="label">M-Pesa</div>
+      <div class="value">KES {{ data.summary.total_mpesa|default:0|floatformat:0 }}</div>
+    </div>
+  </div>
+
+  <!-- Daily breakdown -->
+  <div class="card">
+    <div class="card-header"><h2>Daily Breakdown</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Transactions</th><th>Cash</th><th>M-Pesa</th><th>Total</th>
+        </tr></thead>
+        <tbody>
+          {% for row in data.daily %}
+          <tr {% if row.count == 0 %}style="opacity:.5"{% endif %}>
+            <td>{{ row.date }}</td>
+            <td>{{ row.count }}</td>
+            <td>KES {{ row.total_cash|floatformat:2 }}</td>
+            <td>KES {{ row.total_mpesa|floatformat:2 }}</td>
+            <td class="font-bold">KES {{ row.total_amount|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}

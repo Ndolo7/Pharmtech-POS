@@ -1,0 +1,20 @@
+<div class="stats-grid dashboard-stats-grid">
+  <div class="stat-card dashboard-stat-card blue">
+    <div class="label">Today's Sales</div>
+    <div class="value">KES {{ today_total|floatformat:0 }}</div>
+    <div class="text-muted text-sm mt-1">{{ today_count }} transaction{{ today_count|pluralize }}</div>
+  </div>
+  <div class="stat-card dashboard-stat-card green">
+    <div class="label">Cash Today</div>
+    <div class="value">KES {{ today_cash|floatformat:0 }}</div>
+  </div>
+  <div class="stat-card dashboard-stat-card yellow">
+    <div class="label">M-Pesa Today</div>
+    <div class="value">KES {{ today_mpesa|floatformat:0 }}</div>
+  </div>
+  <div class="stat-card dashboard-stat-card {% if active_shift %}green{% else %}red{% endif %}">
+    <div class="label">This Month</div>
+    <div class="value">KES {{ month_total|floatformat:0 }}</div>
+    <div class="text-muted text-sm mt-1">{{ month_count }} transaction{{ month_count|pluralize }}</div>
+  </div>
+</div>
