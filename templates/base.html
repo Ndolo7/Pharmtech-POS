@@ -39,9 +39,14 @@
   <!-- Alpine.js -->
   <script defer src="{% static 'vendor/alpine.min.js' %}"></script>
   <script>
-    if (!window.Alpine) {
-      document.write('<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"><\\/script>');
-    }
+    window.addEventListener("load", function () {
+      if (!window.Alpine) {
+        const alpineFallback = document.createElement("script");
+        alpineFallback.defer = true;
+        alpineFallback.src = "https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js";
+        document.head.appendChild(alpineFallback);
+      }
+    });
   </script>
   <script>
     window.addEventListener("load", function () {

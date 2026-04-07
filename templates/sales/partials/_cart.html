@@ -21,14 +21,14 @@
           <div class="cart-item-meta">KES <span x-text="item.price.toFixed(2)"></span> each</div>
         </div>
         <div class="qty-control">
-          <button class="qty-btn" @click="updateQty(item.id, item.qty - 1)">−</button>
-          <span x-text="item.qty" style="font-weight:600;min-width:24px;text-align:center"></span>
-          <button class="qty-btn" @click="updateQty(item.id, item.qty + 1)">+</button>
+          <button class="qty-btn" @click="updateQty(item.id, item.quantity - 1)">−</button>
+          <span x-text="item.quantity" style="font-weight:600;min-width:24px;text-align:center"></span>
+          <button class="qty-btn" @click="updateQty(item.id, item.quantity + 1)">+</button>
           <button class="btn-icon" @click="removeItem(item.id)" style="margin-left:4px;color:var(--danger)">✕</button>
         </div>
       </div>
       <div class="flex justify-end mt-1">
-        <span style="font-weight:600;font-size:13px">KES <span x-text="(item.qty * item.price).toFixed(2)"></span></span>
+        <span style="font-weight:600;font-size:13px">KES <span x-text="(item.quantity * item.price).toFixed(2)"></span></span>
       </div>
     </div>
   </template>
