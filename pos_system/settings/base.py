@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "django_htmx",
     "widget_tweaks",
     "django_filters",
+    "anymail",
     # Local apps
     "accounts",
     "products",
@@ -104,3 +105,30 @@ AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
+
+# Email settings
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@pharmtech.local")
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+ANYMAIL = {
+    "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
+}
+
+# Automated reorder settings
+SITE_BASE_URL = config("SITE_BASE_URL", default="http://localhost:8000")
+AUTO_ORDER_LINK_EXPIRY_SECONDS = max(60, config("AUTO_ORDER_LINK_EXPIRY_SECONDS", default=3600, cast=int))
+AUTO_ORDER_CHECK_INTERVAL_MINUTES = max(1, config("AUTO_ORDER_CHECK_INTERVAL_MINUTES", default=15, cast=int))
+AUTO_ORDER_EMAIL_FROM = config("AUTO_ORDER_EMAIL_FROM", default=DEFAULT_FROM_EMAIL)
+
+# Celery
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default=CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    "scan-low-stock-and-trigger-reorders": {
+        "task": "products.tasks.scan_low_stock_and_trigger_reorders",
+        "schedule": float(AUTO_ORDER_CHECK_INTERVAL_MINUTES * 60),
+    },
+}
