@@ -10,6 +10,7 @@
       hx-target="#stock-table-container"
       hx-trigger="keyup changed delay:300ms"
       hx-swap="innerHTML"
+      hx-push-url="true"
       hx-include="#stock-filters"
       name="q"
       value="{{ search }}">
@@ -19,6 +20,7 @@
       hx-target="#stock-table-container"
       hx-trigger="change"
       hx-swap="innerHTML"
+      hx-push-url="true"
       hx-include="#stock-filters">
       {% for branch in branch_options %}
       <option value="{{ branch.id }}" {% if active_branch and branch.id == active_branch.id %}selected{% endif %}>

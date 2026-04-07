@@ -10,6 +10,7 @@
       hx-target="#product-table-container"
       hx-trigger="keyup changed delay:300ms"
       hx-swap="innerHTML"
+      hx-push-url="true"
       hx-include="#products-filters"
       name="q"
       value="{{ search }}">
@@ -19,6 +20,7 @@
       hx-target="#product-table-container"
       hx-trigger="change"
       hx-swap="innerHTML"
+      hx-push-url="true"
       hx-include="#products-filters">
       {% for branch in branch_options %}
       <option value="{{ branch.id }}" {% if active_branch and branch.id == active_branch.id %}selected{% endif %}>
@@ -31,11 +33,6 @@
     {% endif %}
   </div>
   <div class="flex gap-2">
-    {% if request.user.can_manage_users %}
-    <a class="btn btn-secondary" href="{% url 'category-list' %}">
-      Categories
-    </a>
-    {% endif %}
     <button class="btn btn-outline"
       hx-get="{% url 'product-bulk-upload' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
       hx-target="#modal-container"

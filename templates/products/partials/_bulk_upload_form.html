@@ -6,9 +6,13 @@
     </div>
     <div class="modal-body">
       <p class="text-sm text-muted" style="margin-bottom:12px">
-        Required columns: <strong>name</strong>, <strong>category</strong>, <strong>unit_price</strong>, <strong>cost_price</strong>.
-        Optional: barcode, description, reorder_level.
+        Required columns: <strong>code</strong>, <strong>DESCRIPTION</strong>, <strong>PACK_QTY</strong>, <strong>INV_TRADEPRICE</strong>, <strong>selling_Price</strong>, <strong>minimum</strong>, <strong>max</strong>.
       </p>
+      <div style="margin-bottom:12px">
+        <a class="btn btn-secondary btn-sm" href="{% url 'product-bulk-template-download' %}" target="_blank" rel="noopener">
+          Download Template (.xlsx)
+        </a>
+      </div>
       <form method="post"
         enctype="multipart/form-data"
         hx-post="{% url 'product-bulk-upload' %}"

@@ -26,10 +26,6 @@
             {{ form.barcode }}
           </div>
         </div>
-        <div class="form-group">
-          <label>Category *</label>
-          {{ form.category }}
-        </div>
         <div class="form-row">
           <div class="form-group">
             <label>Unit Price (KES) *</label>
@@ -40,9 +36,19 @@
             {{ form.cost_price }}
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Reorder Level *</label>
+            {{ form.reorder_level }}
+          </div>
+          <div class="form-group">
+            <label>Max Stock *</label>
+            {{ form.max_stock }}
+          </div>
+        </div>
         <div class="form-group">
-          <label>Reorder Level</label>
-          {{ form.reorder_level }}
+          <label>Pack Quantity *</label>
+          {{ form.pack_quantity }}
         </div>
         <div class="form-group">
           <label>Description</label>

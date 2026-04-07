@@ -1,0 +1,94 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supplier Reorder Confirmation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <style>
+    .supplier-page { min-height: 100vh; background: var(--gray-50); padding: 24px; }
+    .supplier-wrap { max-width: 760px; margin: 0 auto; }
+    .supplier-card { background: #fff; border-radius: 12px; box-shadow: var(--shadow-md); padding: 24px; }
+    .supplier-title { font-size: 22px; font-weight: 700; color: var(--gray-900); margin-bottom: 8px; }
+    .supplier-subtitle { font-size: 13px; color: var(--gray-500); margin-bottom: 20px; }
+    .supplier-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    .supplier-meta .meta-item { border: 1px solid var(--gray-200); border-radius: 8px; padding: 10px 12px; }
+    .supplier-meta .meta-label { font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: .5px; }
+    .supplier-meta .meta-value { font-size: 14px; font-weight: 600; color: var(--gray-800); margin-top: 2px; }
+    .radio-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+    .radio-row label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--gray-700); }
+    .form-errors { margin-top: 6px; color: var(--danger); font-size: 12px; }
+    @media (max-width: 640px) {
+      .supplier-meta { grid-template-columns: 1fr; }
+      .supplier-page { padding: 14px; }
+      .supplier-card { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="supplier-page">
+    <div class="supplier-wrap">
+      <div class="supplier-card">
+        <h1 class="supplier-title">Reorder Confirmation</h1>
+        <p class="supplier-subtitle">Please confirm if you can supply this product request.</p>
+
+        <div class="supplier-meta">
+          <div class="meta-item">
+            <div class="meta-label">Product</div>
+            <div class="meta-value">{{ supplier_request.reorder_request.product.name }}</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Requested Quantity</div>
+            <div class="meta-value">{{ supplier_request.requested_quantity }}</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Supplier</div>
+            <div class="meta-value">{{ supplier_request.supplier.name }}</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Link Expires</div>
+            <div class="meta-value">{{ supplier_request.expires_at|date:"Y-m-d H:i:s T" }}</div>
+          </div>
+        </div>
+
+        {% if message %}
+          <div class="message {% if message_type == 'success' %}message-success{% elif message_type == 'error' %}message-error{% elif message_type == 'warning' %}message-warning{% else %}message-info{% endif %}" style="max-width:none; margin-bottom:16px;">
+            {{ message }}
+          </div>
+        {% endif %}
+
+        {% if can_respond %}
+          <form method="post">
+            {% csrf_token %}
+
+            <div class="form-group">
+              <label>Can you supply this product?</label>
+              <div class="radio-row">
+                {{ form.can_supply }}
+              </div>
+              {% if form.can_supply.errors %}<div class="form-errors">{{ form.can_supply.errors }}</div>{% endif %}
+            </div>
+
+            <div class="form-group">
+              <label>Quantity You Can Supply (max {{ max_quantity }})</label>
+              {{ form.quantity }}
+              {% if form.quantity.errors %}<div class="form-errors">{{ form.quantity.errors }}</div>{% endif %}
+            </div>
+
+            {% if form.non_field_errors %}
+              <div class="message message-error" style="max-width:none; margin-bottom:12px;">{{ form.non_field_errors }}</div>
+            {% endif %}
+
+            <button type="submit" class="btn btn-primary">Submit Response</button>
+          </form>
+        {% else %}
+          <p class="text-sm text-muted">If you believe this is an error, please contact our procurement team.</p>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+</body>
+</html>

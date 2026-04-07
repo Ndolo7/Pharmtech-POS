@@ -5,7 +5,6 @@
     <div class="font-medium">{{ p.name }}</div>
     {% if p.barcode %}<div class="text-sm text-muted">{{ p.barcode }}</div>{% endif %}
   </td>
-  <td>{{ p.category.name }}</td>
   <td>KES {{ p.unit_price|floatformat:2 }}</td>
   <td>KES {{ p.cost_price|floatformat:2 }}</td>
   <td>
@@ -17,6 +16,8 @@
     {% endif %}
   </td>
   <td>{{ p.reorder_level }}</td>
+  <td>{{ p.max_stock }}</td>
+  <td>{{ p.pack_quantity }}</td>
   <td>
     <div class="flex gap-2">
       <button class="btn btn-sm btn-outline"
