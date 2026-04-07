@@ -5,6 +5,7 @@ urlpatterns = [
     path("", views.product_list_view, name="product-list"),
     path("stock/", views.stock_list_view, name="stock-list"),
     path("create/", views.product_create_view, name="product-create"),
+    path("bulk-upload/template/", views.product_bulk_template_download_view, name="product-bulk-template-download"),
     path("bulk-upload/", views.product_bulk_upload_view, name="product-bulk-upload"),
     path("<int:pk>/edit/", views.product_edit_view, name="product-edit"),
     path("receive/", views.receive_stock_view, name="receive-stock"),
@@ -16,4 +17,9 @@ urlpatterns = [
     path("categories/", views.category_list_view, name="category-list"),
     path("categories/create/", views.category_create_view, name="category-create"),
     path("categories/<int:pk>/edit/", views.category_edit_view, name="category-edit"),
+    path(
+        "reorder/respond/<uuid:token>/",
+        views.supplier_reorder_response_view,
+        name="supplier-reorder-response",
+    ),
 ]
