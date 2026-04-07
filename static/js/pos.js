@@ -14,14 +14,21 @@ function posTerminal() {
       window.__posTerminal = this;
       this.syncShiftState();
 
-      document.addEventListener("click", (event) => {
+      // Prevent duplicate bindings if init() runs more than once on this page.
+      if (window.__posProductClickHandler) {
+        document.removeEventListener("click", window.__posProductClickHandler);
+      }
+
+      this._productClickHandler = (event) => {
         const card = event.target.closest("[data-product-id]");
         if (!card) return;
 
         const id = parseInt(card.dataset.productId, 10);
         const product = (window.POS_PRODUCTS || []).find((item) => item.id === id);
         if (product) this.addItem(product);
-      });
+      };
+      document.addEventListener("click", this._productClickHandler);
+      window.__posProductClickHandler = this._productClickHandler;
 
       document.body.addEventListener("htmx:afterSwap", (event) => {
         this.syncShiftState();
@@ -61,11 +68,11 @@ function posTerminal() {
 
       const existing = this.cart.find((item) => item.id === product.id);
       if (existing) {
-        if (existing.qty >= product.stock) {
+        if (existing.quantity >= product.stock) {
           alert("Insufficient stock");
           return;
         }
-        existing.qty += 1;
+        existing.quantity += 1;
         return;
       }
 
@@ -73,7 +80,7 @@ function posTerminal() {
         id: product.id,
         name: product.name,
         price: product.price,
-        qty: 1,
+        quantity: 1,
         stock: product.stock,
       });
     },
@@ -92,7 +99,7 @@ function posTerminal() {
         return;
       }
 
-      item.qty = newQty;
+      item.quantity = newQty;
     },
 
     removeItem(id) {
@@ -100,7 +107,7 @@ function posTerminal() {
     },
 
     getTotal() {
-      return this.cart.reduce((sum, item) => sum + item.qty * item.price, 0);
+      return this.cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
     },
 
     submitSale() {

@@ -111,7 +111,27 @@ def process_sale_view(request):
             customer_name = form.cleaned_data.get("customer_name", "")
             customer_phone = form.cleaned_data.get("customer_phone", "")
 
-            total_amount = sum(item["quantity"] * item["price"] for item in cart)
+            normalized_cart = []
+            for item in cart:
+                quantity = item.get("quantity", item.get("qty"))
+                if quantity is None:
+                    return _error_fragment("Invalid cart payload: missing quantity.")
+                product_id = item.get("id")
+                if not product_id:
+                    return _error_fragment("Invalid cart payload: missing product id.")
+                qty_int = int(quantity)
+                if qty_int <= 0:
+                    return _error_fragment("Invalid cart payload: quantity must be greater than zero.")
+                normalized_cart.append(
+                    {
+                        "id": int(product_id),
+                        "name": item.get("name", ""),
+                        "price": float(item.get("price", 0)),
+                        "quantity": qty_int,
+                    }
+                )
+
+            total_amount = sum(item["quantity"] * item["price"] for item in normalized_cart)
 
             # Auto-fill single payment
             if payment_method == "cash":
@@ -138,7 +158,7 @@ def process_sale_view(request):
                 shift=shift,
             )
 
-            for item in cart:
+            for item in normalized_cart:
                 product = get_object_or_404(Product, pk=item["id"])
                 qty = int(item["quantity"])
 
@@ -166,7 +186,7 @@ def process_sale_view(request):
 
         receipt_items = [
             {**item, "line_total": item["quantity"] * item["price"]}
-            for item in cart
+            for item in normalized_cart
         ]
 
         return render(request, "sales/partials/_receipt.html", {
