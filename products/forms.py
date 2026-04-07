@@ -1,20 +1,32 @@
 from django import forms
-from .models import Product, Category, Supplier
+
 from branches.models import Branch
+
+from .models import Category, Product, Supplier
 
 
 class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
-        fields = ("name", "barcode", "category", "description", "unit_price", "cost_price", "reorder_level")
+        fields = (
+            "name",
+            "barcode",
+            "description",
+            "unit_price",
+            "cost_price",
+            "reorder_level",
+            "max_stock",
+            "pack_quantity",
+        )
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-input", "placeholder": "Product name"}),
             "barcode": forms.TextInput(attrs={"class": "form-input", "placeholder": "Barcode (optional)"}),
-            "category": forms.Select(attrs={"class": "form-input"}),
             "description": forms.Textarea(attrs={"class": "form-textarea", "rows": 2, "placeholder": "Description"}),
             "unit_price": forms.NumberInput(attrs={"class": "form-input", "step": "0.01", "placeholder": "0.00"}),
             "cost_price": forms.NumberInput(attrs={"class": "form-input", "step": "0.01", "placeholder": "0.00"}),
             "reorder_level": forms.NumberInput(attrs={"class": "form-input", "placeholder": "10"}),
+            "max_stock": forms.NumberInput(attrs={"class": "form-input", "placeholder": "100", "min": "1"}),
+            "pack_quantity": forms.NumberInput(attrs={"class": "form-input", "placeholder": "1", "min": "1"}),
         }
 
 
@@ -39,6 +51,46 @@ class SupplierForm(forms.ModelForm):
             "email": forms.EmailInput(attrs={"class": "form-input", "required": True}),
             "address": forms.Textarea(attrs={"class": "form-textarea", "rows": 2}),
         }
+
+
+class SupplierReorderResponseForm(forms.Form):
+    CAN_SUPPLY_CHOICES = (("yes", "Yes"), ("no", "No"))
+
+    can_supply = forms.ChoiceField(
+        choices=CAN_SUPPLY_CHOICES,
+        initial="yes",
+        widget=forms.RadioSelect,
+    )
+    quantity = forms.IntegerField(min_value=0, required=False)
+
+    def __init__(self, *args, max_quantity=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_quantity = max(0, int(max_quantity or 0))
+        self.fields["quantity"].widget.attrs.update(
+            {
+                "class": "form-input",
+                "placeholder": f"Max {self.max_quantity}",
+                "max": str(self.max_quantity),
+                "min": "0",
+            }
+        )
+
+    def clean(self):
+        cleaned = super().clean()
+        can_supply = cleaned.get("can_supply")
+        quantity = cleaned.get("quantity")
+
+        if can_supply == "yes":
+            if quantity is None:
+                self.add_error("quantity", "Enter the quantity you can supply.")
+            elif quantity <= 0:
+                self.add_error("quantity", "Quantity must be greater than zero.")
+            elif quantity > self.max_quantity:
+                self.add_error("quantity", f"Quantity cannot exceed {self.max_quantity}.")
+        else:
+            cleaned["quantity"] = 0
+
+        return cleaned
 
 
 class AdjustStockForm(forms.Form):

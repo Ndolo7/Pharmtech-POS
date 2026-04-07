@@ -19,7 +19,6 @@ class StockSerializer(serializers.ModelSerializer):
 
 class ProductSerializer(serializers.ModelSerializer):
     current_stock = serializers.SerializerMethodField()
-    category_name = serializers.CharField(source='category.name', read_only=True)
 
     class Meta:
         model = Product
