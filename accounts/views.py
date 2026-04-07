@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.views.decorators.http import require_POST
@@ -33,7 +34,17 @@ def login_view(request):
 @login_required
 def logout_view(request):
     logout(request)
-    return redirect("/accounts/login/")
+    response = redirect("/accounts/login/")
+    response.delete_cookie(
+        settings.SESSION_COOKIE_NAME,
+        path=settings.SESSION_COOKIE_PATH,
+        domain=settings.SESSION_COOKIE_DOMAIN,
+        samesite=settings.SESSION_COOKIE_SAMESITE,
+    )
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 
 @login_required
