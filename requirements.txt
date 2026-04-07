@@ -7,3 +7,7 @@ Pillow==10.0.1
 reportlab==4.0.4
 django-filter==23.3
 openpyxl==3.1.5
+celery==5.4.0
+redis==5.2.1
+dj-database-url>=3.1.0,<4.0.0
+django-anymail[brevo]>=10.0
