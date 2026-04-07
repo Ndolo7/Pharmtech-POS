@@ -1,4 +1,5 @@
 from decimal import Decimal
+from io import BytesIO
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
@@ -7,6 +8,7 @@ from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils import timezone
 
 from branches.models import Branch
 from .forms import (
@@ -16,10 +18,13 @@ from .forms import (
     TransferStockForm,
     ProductBulkUploadForm,
     SupplierForm,
+    SupplierReorderResponseForm,
 )
 from .models import (
+    AutoReorderRequest,
     Category,
     Supplier,
+    SupplierReorderRequest,
     Product,
     Stock,
     StockMovement,
@@ -28,6 +33,7 @@ from .models import (
     Transfer,
     TransferItem,
 )
+from .tasks import notify_next_supplier
 
 
 def _can_manage_catalog(user):
@@ -70,7 +76,6 @@ def _products_page_context(request, search="", branch=None):
 
     return {
         "product_data": _build_product_data(active_branch, search=search),
-        "categories": Category.objects.all(),
         "suppliers": Supplier.objects.all(),
         "search": search,
         "active_branch": active_branch,
@@ -88,7 +93,7 @@ def _redirect_with_branch(route_name, branch):
 
 
 def _build_product_data(branch, search=""):
-    products = Product.objects.filter(is_active=True).select_related("category")
+    products = Product.objects.filter(is_active=True)
     if search:
         products = products.filter(Q(name__icontains=search) | Q(barcode__icontains=search))
 
@@ -481,6 +486,44 @@ def transfer_stock_view(request):
     )
 
 
+def _normalized_header_name(value):
+    return str(value or "").strip().lower().replace(" ", "_")
+
+
+def _to_cell_text(value):
+    if value in (None, ""):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+@login_required
+def product_bulk_template_download_view(request):
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        messages.error(request, "openpyxl is not installed. Please install dependencies and retry.")
+        return redirect("product-list")
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Inventory Template"
+    sheet.append(["code", "DESCRIPTION", "PACK_QTY", "INV_TRADEPRICE", "selling_Price", "minimum", "max"])
+    sheet.append(["1000001", "Paracetamol 500mg", 10, 50.00, 80.00, 20, 200])
+
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+
+    response = HttpResponse(
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="inventory_upload_template.xlsx"'
+    return response
+
+
 @login_required
 def product_bulk_upload_view(request):
     active_branch = _resolve_products_branch(request)
@@ -508,12 +551,13 @@ def product_bulk_upload_view(request):
             messages.error(request, "The uploaded sheet is empty.")
             return _render_product_table(request, branch=active_branch)
 
-        headers = [str(col).strip().lower() if col is not None else "" for col in rows[0]]
-        required_headers = {"name", "category", "unit_price", "cost_price"}
+        headers = [_normalized_header_name(col) for col in rows[0]]
+        required_headers = {"code", "description", "pack_qty", "inv_tradeprice", "selling_price", "minimum", "max"}
         if not required_headers.issubset(set(headers)):
             messages.error(
                 request,
-                "Missing required columns. Required: name, category, unit_price, cost_price.",
+                "Missing required columns. Required: code, DESCRIPTION, PACK_QTY, INV_TRADEPRICE, "
+                "selling_Price, minimum, max.",
             )
             return _render_product_table(request, branch=active_branch)
 
@@ -527,41 +571,32 @@ def product_bulk_upload_view(request):
                 continue
 
             try:
-                name = str(row[h["name"]]).strip()
-                category_name = str(row[h["category"]]).strip()
-                unit_price = Decimal(str(row[h["unit_price"]]).strip())
-                cost_price = Decimal(str(row[h["cost_price"]]).strip())
-                if not name or not category_name:
+                barcode = _to_cell_text(row[h["code"]])
+                description = _to_cell_text(row[h["description"]])
+                pack_quantity = int(Decimal(str(row[h["pack_qty"]]).strip()))
+                cost_price = Decimal(str(row[h["inv_tradeprice"]]).strip())
+                unit_price = Decimal(str(row[h["selling_price"]]).strip())
+                reorder_level = int(Decimal(str(row[h["minimum"]]).strip()))
+                max_stock = int(Decimal(str(row[h["max"]]).strip()))
+                if not description:
+                    skipped += 1
+                    continue
+                if pack_quantity < 1 or max_stock < 1 or reorder_level < 0:
                     skipped += 1
                     continue
             except Exception:
                 skipped += 1
                 continue
 
-            barcode = ""
-            if "barcode" in h and row[h["barcode"]] not in (None, ""):
-                barcode = str(row[h["barcode"]]).strip()
-
-            description = ""
-            if "description" in h and row[h["description"]] not in (None, ""):
-                description = str(row[h["description"]]).strip()
-
-            reorder_level = 10
-            if "reorder_level" in h and row[h["reorder_level"]] not in (None, ""):
-                try:
-                    reorder_level = int(row[h["reorder_level"]])
-                except Exception:
-                    reorder_level = 10
-
-            category, _ = Category.objects.get_or_create(name=category_name, defaults={"description": ""})
-
+            name = description
             defaults = {
                 "name": name,
-                "category": category,
                 "description": description,
                 "unit_price": unit_price,
                 "cost_price": cost_price,
                 "reorder_level": reorder_level,
+                "max_stock": max_stock,
+                "pack_quantity": pack_quantity,
                 "is_active": True,
             }
 
@@ -695,3 +730,183 @@ def category_edit_view(request, pk):
         return render(request, "products/partials/_category_form.html", {"form": form, "category": category})
 
     return render(request, "products/partials/_category_form.html", {"form": CategoryForm(instance=category), "category": category})
+
+
+def supplier_reorder_response_view(request, token):
+    supplier_request = get_object_or_404(
+        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product"),
+        token=token,
+    )
+    now = timezone.now()
+    max_stock = max(int(supplier_request.reorder_request.target_stock_level or supplier_request.reorder_request.product.max_stock or 1), 1)
+    max_quantity = min(max_stock, supplier_request.requested_quantity)
+
+    if supplier_request.status == SupplierReorderRequest.STATUS_PENDING and now > supplier_request.expires_at:
+        with transaction.atomic():
+            locked_request = SupplierReorderRequest.objects.select_for_update().filter(pk=supplier_request.pk).first()
+            if (
+                locked_request
+                and locked_request.status == SupplierReorderRequest.STATUS_PENDING
+                and timezone.now() > locked_request.expires_at
+            ):
+                locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
+                locked_request.responded_at = timezone.now()
+                locked_request.save(update_fields=["status", "responded_at", "updated_at"])
+
+                reorder = locked_request.reorder_request
+                if reorder.status == AutoReorderRequest.STATUS_OPEN and reorder.remaining_quantity > 0:
+                    notify_next_supplier.delay(reorder.id)
+
+        supplier_request.refresh_from_db()
+
+    if request.method == "POST":
+        form = SupplierReorderResponseForm(request.POST, max_quantity=max_quantity)
+        if form.is_valid():
+            should_escalate = False
+
+            with transaction.atomic():
+                locked_request = (
+                    SupplierReorderRequest.objects.select_for_update()
+                    .select_related("reorder_request")
+                    .filter(pk=supplier_request.pk)
+                    .first()
+                )
+                if not locked_request:
+                    return render(
+                        request,
+                        "products/supplier_reorder_response.html",
+                        {
+                            "supplier_request": supplier_request,
+                            "can_respond": False,
+                            "message_type": "error",
+                            "message": "This supplier request was not found.",
+                        },
+                    )
+
+                now = timezone.now()
+                if (
+                    locked_request.status != SupplierReorderRequest.STATUS_PENDING
+                    or now > locked_request.expires_at
+                ):
+                    reorder_id = None
+                    if locked_request.status == SupplierReorderRequest.STATUS_PENDING and now > locked_request.expires_at:
+                        locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
+                        locked_request.responded_at = now
+                        locked_request.save(update_fields=["status", "responded_at", "updated_at"])
+                        if (
+                            locked_request.reorder_request.status == AutoReorderRequest.STATUS_OPEN
+                            and locked_request.reorder_request.remaining_quantity > 0
+                        ):
+                            reorder_id = locked_request.reorder_request_id
+                    if reorder_id:
+                        notify_next_supplier.delay(reorder_id)
+                    locked_request.refresh_from_db()
+                    return render(
+                        request,
+                        "products/supplier_reorder_response.html",
+                        {
+                            "supplier_request": locked_request,
+                            "can_respond": False,
+                            "message_type": "error",
+                            "message": "This link is expired or already used.",
+                        },
+                    )
+
+                reorder = (
+                    AutoReorderRequest.objects.select_for_update()
+                    .filter(pk=locked_request.reorder_request_id)
+                    .first()
+                )
+                if not reorder or reorder.status != AutoReorderRequest.STATUS_OPEN:
+                    return render(
+                        request,
+                        "products/supplier_reorder_response.html",
+                        {
+                            "supplier_request": locked_request,
+                            "can_respond": False,
+                            "message_type": "warning",
+                            "message": "This reorder request is no longer active.",
+                        },
+                    )
+
+                can_supply = form.cleaned_data["can_supply"] == "yes"
+                quantity = int(form.cleaned_data.get("quantity") or 0)
+                effective_max = min(max_stock, locked_request.requested_quantity, reorder.remaining_quantity)
+                quantity = min(quantity, effective_max)
+
+                if not can_supply or quantity <= 0:
+                    locked_request.status = SupplierReorderRequest.STATUS_REJECTED
+                    locked_request.fulfilled_quantity = 0
+                    locked_request.responded_at = now
+                    locked_request.save(
+                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
+                    )
+                    should_escalate = reorder.remaining_quantity > 0
+                    feedback = "Response received. We will contact the next supplier."
+                else:
+                    locked_request.fulfilled_quantity = quantity
+                    if quantity < locked_request.requested_quantity:
+                        locked_request.status = SupplierReorderRequest.STATUS_PARTIAL
+                    else:
+                        locked_request.status = SupplierReorderRequest.STATUS_ACCEPTED
+                    locked_request.responded_at = now
+                    locked_request.save(
+                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
+                    )
+
+                    reorder.remaining_quantity = max(reorder.remaining_quantity - quantity, 0)
+                    if reorder.remaining_quantity == 0:
+                        reorder.status = AutoReorderRequest.STATUS_FULFILLED
+                        reorder.completed_at = now
+                    reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
+
+                    if reorder.remaining_quantity > 0:
+                        should_escalate = True
+                        feedback = (
+                            f"Response received. We recorded {quantity} unit(s) and will contact the next supplier "
+                            f"for the remaining {reorder.remaining_quantity}."
+                        )
+                    else:
+                        feedback = f"Thank you. We recorded {quantity} unit(s) for this reorder request."
+
+            if should_escalate:
+                notify_next_supplier.delay(supplier_request.reorder_request_id)
+
+            final_request = SupplierReorderRequest.objects.select_related(
+                "supplier", "reorder_request__product"
+            ).get(pk=supplier_request.pk)
+            return render(
+                request,
+                "products/supplier_reorder_response.html",
+                {
+                    "supplier_request": final_request,
+                    "can_respond": False,
+                    "message_type": "success",
+                    "message": feedback,
+                },
+            )
+    else:
+        form = SupplierReorderResponseForm(max_quantity=max_quantity)
+
+    can_respond = (
+        supplier_request.status == SupplierReorderRequest.STATUS_PENDING
+        and timezone.now() <= supplier_request.expires_at
+    )
+    message = ""
+    message_type = "info"
+    if not can_respond:
+        message = "This link is expired or already used."
+        message_type = "error"
+
+    return render(
+        request,
+        "products/supplier_reorder_response.html",
+        {
+            "supplier_request": supplier_request,
+            "form": form,
+            "max_quantity": max_quantity,
+            "can_respond": can_respond,
+            "message": message,
+            "message_type": message_type,
+        },
+    )
