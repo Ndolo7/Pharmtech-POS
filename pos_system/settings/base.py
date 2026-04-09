@@ -110,7 +110,7 @@ LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # Email settings
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default='Pharmtech POS <noreply@example.com>')
-EMAIL_BACKEND = anymail.backends.brevo.EmailBackend
+EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 ANYMAIL = {
     "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
 }
