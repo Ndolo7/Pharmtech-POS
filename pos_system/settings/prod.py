@@ -13,6 +13,4 @@ DATABASES = {
     "default": dj_database_url.parse(config("DATABASE_URL")),
 }
 
-EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
-
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
