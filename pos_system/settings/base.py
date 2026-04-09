@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "widget_tweaks",
     "django_filters",
     "anymail",
+    "django_celery_beat",
     # Local apps
     "accounts",
     "products",
@@ -41,6 +42,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -107,7 +109,7 @@ LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # Email settings
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@pharmtech.local")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default='Pharmtech POS <noreply@example.com>')
 EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 ANYMAIL = {
     "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
@@ -132,3 +134,4 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": float(AUTO_ORDER_CHECK_INTERVAL_MINUTES * 60),
     },
 }
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
