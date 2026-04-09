@@ -1,0 +1,7 @@
+<div id="shift-status-badge" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% if shift_active|default:request.user.is_active_shift %}
+  <span class="badge badge-success">Shift Active</span>
+  {% else %}
+  <span class="badge badge-warning">No Active Shift</span>
+  {% endif %}
+</div>

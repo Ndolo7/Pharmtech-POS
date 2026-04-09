@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Sales Report — Pharmtech POS{% endblock %}
+{% block page_title %}Sales Report{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+  <div class="card-header"><h2>Filter</h2></div>
+  <div class="card-body">
+    <form hx-get="{% url 'sales-report' %}"
+      hx-target="#report-results"
+      hx-swap="innerHTML"
+      hx-indicator="#loading"
+      class="flex gap-3 items-center">
+      <div class="form-group" style="margin:0">
+        <input type="date" name="start_date" class="form-input" value="{{ start_date }}" required>
+      </div>
+      <span class="text-muted">to</span>
+      <div class="form-group" style="margin:0">
+        <input type="date" name="end_date" class="form-input" value="{{ end_date }}" required>
+      </div>
+      <button type="submit" class="btn btn-primary">
+        <span class="htmx-indicator spinner" id="loading"></span>
+        Generate Report
+      </button>
+    </form>
+  </div>
+</div>
+
+<div id="report-results">
+  {% include "reports/partials/_sales_table.html" %}
+</div>
+{% endblock %}

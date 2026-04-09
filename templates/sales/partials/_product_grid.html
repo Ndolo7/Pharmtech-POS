@@ -1,0 +1,21 @@
+<div class="product-grid">
+  {% for item in product_data %}
+  {% with p=item.product stock=item.stock %}
+  <div class="product-card {% if stock <= 0 %}out-of-stock{% endif %}" data-product-id="{{ p.id }}">
+    <h4>{{ p.name }}</h4>
+    <div class="price">KES {{ p.unit_price|floatformat:2 }}</div>
+    <div class="stock {% if stock <= p.reorder_level %}low{% endif %}">
+      {% if stock > 0 %}
+      In stock: {{ stock }}
+      {% else %}
+      Out of stock
+      {% endif %}
+    </div>
+  </div>
+  {% endwith %}
+  {% empty %}
+  <div class="empty-state" style="grid-column:1/-1">
+    No products match your search.
+  </div>
+  {% endfor %}
+</div>

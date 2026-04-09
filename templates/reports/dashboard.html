@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Pharmtech POS{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard-home">
+  <!-- Stats — polled every 30 s -->
+  <div id="dashboard-stats"
+    hx-get="/?partial=stats"
+    hx-trigger="load, every 30s"
+    hx-swap="innerHTML">
+    {% include "reports/partials/_dashboard_stats.html" %}
+  </div>
+
+  <div class="card dashboard-quick-card mb-4">
+    <div class="card-header"><h2>Quick Actions</h2></div>
+    <div class="card-body">
+      <div class="dashboard-actions-grid">
+        <a class="dashboard-action dashboard-action-primary" href="/sales/">
+          <span class="dashboard-action-title">Open POS</span>
+          <span class="dashboard-action-meta">Start checkout and process sales</span>
+        </a>
+        <a class="dashboard-action" href="/products/">
+          <span class="dashboard-action-title">Products</span>
+          <span class="dashboard-action-meta">Manage products and pricing</span>
+        </a>
+        <a class="dashboard-action" href="/products/stock/">
+          <span class="dashboard-action-title">Stock</span>
+          <span class="dashboard-action-meta">Receive, transfer, and adjust stock</span>
+        </a>
+        <a class="dashboard-action" href="/reports/sales/">
+          <span class="dashboard-action-title">Sales Report</span>
+          <span class="dashboard-action-meta">Track daily and period sales</span>
+        </a>
+        <a class="dashboard-action" href="/reports/suppliers/">
+          <span class="dashboard-action-title">Supplier Report</span>
+          <span class="dashboard-action-meta">Review supplier purchases</span>
+        </a>
+        <a class="dashboard-action" href="/reports/shifts/">
+          <span class="dashboard-action-title">Shift Report</span>
+          <span class="dashboard-action-meta">Review cashier shift performance</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {% if active_shift %}
+  <div class="card dashboard-shift-card mt-4">
+    <div class="card-header"><h2>Current Shift</h2></div>
+    <div class="card-body">
+      <div class="dashboard-shift-grid">
+        <div><div class="text-muted text-sm">Started</div><div class="font-medium">{{ active_shift.start_time|date:"H:i" }}</div></div>
+        <div><div class="text-muted text-sm">Opening Cash</div><div class="font-medium">KES {{ active_shift.opening_cash|floatformat:2 }}</div></div>
+        <div><div class="text-muted text-sm">Sales</div><div class="font-medium">{{ active_shift.sales_count }}</div></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

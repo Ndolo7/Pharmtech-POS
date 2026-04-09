@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}POS Terminal — Pharmtech POS{% endblock %}
+{% block page_title %}POS Terminal{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-body { padding: 16px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pos-layout" x-data="posTerminal()" x-init="init()" id="pos-app">
+  <div class="pos-products">
+    <div class="card" style="margin-bottom:12px;padding:12px">
+      <div class="flex gap-2">
+        <input type="text" placeholder="Search products by name or barcode..."
+          class="form-input"
+          style="flex:1"
+          hx-get="{% url 'product-search' %}"
+          hx-target="#product-results"
+          hx-trigger="keyup changed delay:250ms"
+          hx-swap="innerHTML"
+          name="q"
+          id="product-search-input">
+      </div>
+    </div>
+
+    <div id="product-results">
+      {% include "sales/partials/_product_grid.html" with product_data=product_data_for_grid %}
+    </div>
+  </div>
+
+  <div class="cart-panel">
+    <div style="padding:12px 12px 0">
+      {% include "sales/partials/_current_shift.html" %}
+    </div>
+
+    {% include "sales/partials/_cart.html" %}
+    {% include "sales/partials/_payment_form.html" %}
+
+    <div id="sale-result" style="padding:0 16px 16px"></div>
+    <div id="cart-reset-hook" class="hidden"></div>
+  </div>
+
+  {% include "sales/partials/_shift_modal.html" %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.POS_PRODUCTS = {{ products_json|safe }};
+</script>
+<script src="{% static 'js/pos.js' %}"></script>
+{% endblock %}

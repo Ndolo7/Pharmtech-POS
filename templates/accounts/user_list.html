@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Users — Pharmtech POS{% endblock %}
+{% block page_title %}User Management{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <div>
+    <p class="text-muted text-sm">Manage staff accounts and roles</p>
+  </div>
+  <button class="btn btn-primary"
+    hx-get="{% url 'user-create' %}"
+    hx-target="#modal-container"
+    hx-swap="innerHTML">
+    + Add User
+  </button>
+</div>
+
+<div class="card">
+  <div id="user-table">
+    {% include "accounts/partials/_user_table.html" %}
+  </div>
+</div>
+
+<!-- Modal container -->
+<div id="modal-container"></div>
+{% endblock %}

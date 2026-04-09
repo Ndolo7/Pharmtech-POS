@@ -1,0 +1,5 @@
+<div id="messages" class="messages" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% for msg in messages %}
+  <div class="message message-{{ msg.tags|default:'info' }}">{{ msg }}</div>
+  {% endfor %}
+</div>

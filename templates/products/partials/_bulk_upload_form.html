@@ -1,0 +1,41 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-header">
+      <h3>Bulk Upload Products (XLSX)</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-sm text-muted" style="margin-bottom:12px">
+        Required columns: <strong>code</strong>, <strong>DESCRIPTION</strong>, <strong>PACK_QTY</strong>, <strong>INV_TRADEPRICE</strong>, <strong>selling_Price</strong>, <strong>minimum</strong>, <strong>max</strong>.
+      </p>
+      <div style="margin-bottom:12px">
+        <a class="btn btn-secondary btn-sm" href="{% url 'product-bulk-template-download' %}" target="_blank" rel="noopener">
+          Download Template (.xlsx)
+        </a>
+      </div>
+      <form method="post"
+        enctype="multipart/form-data"
+        hx-post="{% url 'product-bulk-upload' %}"
+        hx-target="#product-table-container"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
+        <div class="form-group">
+          <label>Excel File (.xlsx)</label>
+          {{ form.file }}
+          {% if form.file.errors %}<div class="text-danger text-sm">{{ form.file.errors|striptags }}</div>{% endif %}
+        </div>
+
+        {% if form.errors %}
+        <div class="message message-error">{{ form.errors }}</div>
+        {% endif %}
+
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

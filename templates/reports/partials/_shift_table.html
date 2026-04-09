@@ -1,0 +1,33 @@
+{% if data %}
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Cashier</th><th>Date</th>
+        <th>Expected Cash</th><th>Declared Cash</th><th>Cash Variance</th>
+        <th>Expected M-Pesa</th><th>Declared M-Pesa</th><th>M-Pesa Variance</th>
+      </tr></thead>
+      <tbody>
+        {% for s in data %}
+        <tr>
+          <td>{{ s.cashier }}</td>
+          <td>{{ s.date }}</td>
+          <td>KES {{ s.expected_cash|floatformat:2 }}</td>
+          <td>KES {{ s.declared_cash|floatformat:2 }}</td>
+          <td class="{% if s.cash_variance < 0 %}text-danger{% elif s.cash_variance > 0 %}text-success{% endif %} font-bold">
+            KES {{ s.cash_variance|floatformat:2 }}
+          </td>
+          <td>KES {{ s.expected_mpesa|floatformat:2 }}</td>
+          <td>KES {{ s.declared_mpesa|floatformat:2 }}</td>
+          <td class="{% if s.mpesa_variance < 0 %}text-danger{% elif s.mpesa_variance > 0 %}text-success{% endif %} font-bold">
+            KES {{ s.mpesa_variance|floatformat:2 }}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="empty-state">No closed shifts found for this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

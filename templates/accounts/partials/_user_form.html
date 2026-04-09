@@ -1,0 +1,84 @@
+<div class="modal-backdrop" id="user-modal"
+  @click.self="document.getElementById('modal-container').innerHTML=''"
+  x-data>
+  <div class="modal">
+    <div class="modal-header">
+      <h3>{% if editing %}Edit User — {{ editing.username }}{% else %}Add New User{% endif %}</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <form method="post"
+        {% if editing %}
+          hx-post="{% url 'user-edit' editing.pk %}"
+        {% else %}
+          hx-post="{% url 'user-create' %}"
+        {% endif %}
+        hx-target="#user-table"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        <div class="form-row">
+          <div class="form-group">
+            <label>First Name</label>
+            {{ form.first_name }}
+          </div>
+          <div class="form-group">
+            <label>Last Name</label>
+            {{ form.last_name }}
+          </div>
+        </div>
+        {% if not editing %}
+        <div class="form-group">
+          <label>Username</label>
+          {{ form.username }}
+        </div>
+        {% endif %}
+        <div class="form-group">
+          <label>Email</label>
+          {{ form.email }}
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone</label>
+            {{ form.phone_number }}
+          </div>
+          <div class="form-group">
+            <label>Role</label>
+            {{ form.role }}
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Branch</label>
+          {{ form.branch }}
+        </div>
+        {% if not editing %}
+        <div class="form-row">
+          <div class="form-group">
+            <label>Password</label>
+            <div class="password-field">
+              {{ form.password1 }}
+              <button type="button" class="toggle-password" data-password-target="id_password1" aria-label="Show password">Show</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Confirm Password</label>
+            <div class="password-field">
+              {{ form.password2 }}
+              <button type="button" class="toggle-password" data-password-target="id_password2" aria-label="Show password">Show</button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+        {% if form.errors %}
+          <div class="message message-error" style="margin-bottom:12px">
+            {% for field, errors in form.errors.items %}{% for e in errors %}{{ e }} {% endfor %}{% endfor %}
+          </div>
+        {% endif %}
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">{% if editing %}Save Changes{% else %}Create User{% endif %}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

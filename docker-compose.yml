@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  web:
+    image: ghcr.io/ndolo7/pharmtech-pos:latest
+    build: .
+    command: gunicorn pos_system.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - .env
+
+  redis:
+    image: redis:7-alpine
+
+  worker:
+    image: ghcr.io/ndolo7/pharmtech-pos:latest
+    build: .
+    command: celery -A pos_system worker -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - web
+      - redis
+      - db
+
+  beat:
+    image: ghcr.io/ndolo7/pharmtech-pos:latest
+    build: .
+    command: celery -A pos_system beat -l info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - web
+      - redis
+      - db
+
+volumes:
+  postgres_data:
+  static_volume:

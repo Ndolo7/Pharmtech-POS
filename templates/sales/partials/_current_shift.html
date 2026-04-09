@@ -1,0 +1,36 @@
+<div id="current-shift-panel"
+  class="card"
+  data-shift-active="{{ shift|yesno:'1,0' }}"
+  hx-get="{% url 'current-shift' %}"
+  hx-trigger="every 30s"
+  hx-swap="outerHTML">
+  <div class="card-body" style="padding:12px 16px">
+    {% if shift %}
+    <div class="flex justify-between items-center" style="margin-bottom:8px">
+      <div class="badge badge-success">Shift Active</div>
+      <button type="button" class="btn btn-sm btn-danger" @click="showCloseShift=true">Close Shift</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      <div>
+        <div class="text-muted text-sm">Started</div>
+        <div class="font-medium">{{ shift.start_time|date:"H:i" }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Opening Cash</div>
+        <div class="font-medium">KES {{ shift.opening_cash|floatformat:2 }}</div>
+      </div>
+      <div>
+        <div class="text-muted text-sm">Sales</div>
+        <div class="font-medium">{{ shift.sale_set.count }}</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="flex justify-between items-center">
+      <div>
+        <div class="badge badge-warning">No Active Shift</div>
+        <div class="text-muted text-sm mt-2">Start a shift to process transactions.</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>

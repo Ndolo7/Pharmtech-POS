@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Products — Pharmtech POS{% endblock %}
+{% block page_title %}Products{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-4">
+  <div class="flex gap-2 items-center" id="products-filters">
+    <input type="text" placeholder="Search products…" class="form-input" style="width:260px"
+      hx-get="{% url 'product-list' %}"
+      hx-target="#product-table-container"
+      hx-trigger="keyup changed delay:300ms"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+      hx-include="#products-filters"
+      name="q"
+      value="{{ search }}">
+    {% if can_select_branch %}
+    <select name="branch" class="form-input" style="width:220px"
+      hx-get="{% url 'product-list' %}"
+      hx-target="#product-table-container"
+      hx-trigger="change"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+      hx-include="#products-filters">
+      {% for branch in branch_options %}
+      <option value="{{ branch.id }}" {% if active_branch and branch.id == active_branch.id %}selected{% endif %}>
+        {{ branch.name }}
+      </option>
+      {% endfor %}
+    </select>
+    {% elif active_branch %}
+    <span class="badge badge-primary">Branch: {{ active_branch.name }}</span>
+    {% endif %}
+  </div>
+  <div class="flex gap-2">
+    <button class="btn btn-outline"
+      hx-get="{% url 'product-bulk-upload' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML">
+      Bulk Upload
+    </button>
+    <button class="btn btn-primary"
+      hx-get="{% url 'product-create' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML">
+      + Add Product
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div id="product-table-container">
+    {% include "products/partials/_product_table.html" %}
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal-container"></div>
+{% endblock %}

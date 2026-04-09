@@ -1,0 +1,37 @@
+<div class="receipt card" style="margin-top:12px">
+  <div class="card-header">
+    <h2>Receipt {{ receipt_number }}</h2>
+    <span class="badge badge-success">Sale Complete</span>
+  </div>
+  <div class="card-body" style="padding:14px 16px">
+    <div class="text-sm text-muted" style="margin-bottom:8px">{{ sale.created_at|date:"d M Y H:i" }}</div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>Unit</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in cart %}
+          <tr>
+            <td>{{ item.name }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>KES {{ item.price|floatformat:2 }}</td>
+            <td>KES {{ item.line_total|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="flex justify-between" style="font-weight:600">
+      <span>Total</span>
+      <span>KES {{ total_amount|floatformat:2 }}</span>
+    </div>
+  </div>
+</div>
+
+<div id="cart-reset-hook" hx-swap-oob="innerHTML"><span data-reset-cart="1"></span></div>

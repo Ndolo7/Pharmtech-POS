@@ -1,0 +1,235 @@
+import logging
+from datetime import timedelta
+
+from celery import shared_task
+from django.conf import settings
+from django.core.mail import send_mail
+from django.db import transaction
+from django.urls import reverse
+from django.utils import timezone
+
+from .models import AutoReorderRequest, Product, ProductSupplierPriority, Supplier, SupplierReorderRequest
+
+logger = logging.getLogger(__name__)
+
+
+def _auto_order_link_expiry_seconds() -> int:
+    return max(int(getattr(settings, "AUTO_ORDER_LINK_EXPIRY_SECONDS", 3600) or 3600), 60)
+
+
+def _site_base_url() -> str:
+    return str(getattr(settings, "SITE_BASE_URL", "http://localhost:8000")).rstrip("/")
+
+
+def _mail_sender() -> str:
+    return str(
+        getattr(
+            settings,
+            "AUTO_ORDER_EMAIL_FROM",
+            getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@pharmtech.local"),
+        )
+    )
+
+
+@shared_task
+def scan_low_stock_and_trigger_reorders():
+    now = timezone.now()
+    created_count = 0
+    resumed_count = 0
+
+    for product in Product.objects.filter(is_active=True).order_by("id"):
+        current_stock = product.current_stock()
+        product_max_stock = max(int(product.max_stock or 1), 1)
+
+        if current_stock > product.reorder_level:
+            continue
+
+        required_quantity = max(product_max_stock - current_stock, 0)
+        if required_quantity <= 0:
+            continue
+
+        reorder_id = None
+        with transaction.atomic():
+            existing = (
+                AutoReorderRequest.objects.select_for_update()
+                .filter(product=product, status=AutoReorderRequest.STATUS_OPEN)
+                .order_by("-created_at")
+                .first()
+            )
+
+            if existing:
+                has_live_supplier_request = existing.supplier_requests.filter(
+                    status=SupplierReorderRequest.STATUS_PENDING,
+                    expires_at__gt=now,
+                ).exists()
+                if not has_live_supplier_request and existing.remaining_quantity > 0:
+                    reorder_id = existing.id
+                    resumed_count += 1
+            else:
+                reorder = AutoReorderRequest.objects.create(
+                    product=product,
+                    target_stock_level=product_max_stock,
+                    current_stock_snapshot=current_stock,
+                    requested_quantity=required_quantity,
+                    remaining_quantity=required_quantity,
+                    status=AutoReorderRequest.STATUS_OPEN,
+                )
+                reorder_id = reorder.id
+                created_count += 1
+
+        if reorder_id:
+            notify_next_supplier.delay(reorder_id)
+
+    return {"created": created_count, "resumed": resumed_count}
+
+
+@shared_task
+def notify_next_supplier(reorder_request_id: int):
+    now = timezone.now()
+
+    with transaction.atomic():
+        reorder = (
+            AutoReorderRequest.objects.select_for_update()
+            .select_related("product")
+            .filter(pk=reorder_request_id)
+            .first()
+        )
+        if not reorder:
+            return {"status": "missing_reorder_request"}
+
+        if reorder.status != AutoReorderRequest.STATUS_OPEN:
+            return {"status": "inactive", "reorder_status": reorder.status}
+
+        if reorder.remaining_quantity <= 0:
+            reorder.status = AutoReorderRequest.STATUS_FULFILLED
+            reorder.completed_at = now
+            reorder.save(update_fields=["status", "completed_at", "updated_at"])
+            return {"status": "fulfilled"}
+
+        pending = (
+            reorder.supplier_requests.select_for_update()
+            .filter(status=SupplierReorderRequest.STATUS_PENDING)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if pending:
+            if now <= pending.expires_at:
+                return {
+                    "status": "awaiting_supplier",
+                    "supplier_request_id": pending.id,
+                    "supplier": pending.supplier_id,
+                }
+
+            pending.status = SupplierReorderRequest.STATUS_EXPIRED
+            pending.responded_at = now
+            pending.save(update_fields=["status", "responded_at", "updated_at"])
+
+        attempted_supplier_ids = reorder.supplier_requests.values_list("supplier_id", flat=True)
+        prioritized_supplier_qs = ProductSupplierPriority.objects.select_related("supplier").filter(
+            product=reorder.product,
+            is_active=True,
+        )
+
+        next_supplier = None
+        supplier_priority = None
+        if prioritized_supplier_qs.exists():
+            next_priority = (
+                prioritized_supplier_qs.exclude(supplier_id__in=attempted_supplier_ids)
+                .order_by("priority", "id")
+                .first()
+            )
+            if next_priority:
+                next_supplier = next_priority.supplier
+                supplier_priority = next_priority.priority
+        else:
+            next_supplier = Supplier.objects.exclude(id__in=attempted_supplier_ids).order_by("id").first()
+            supplier_priority = reorder.supplier_requests.count() + 1 if next_supplier else None
+
+        if not next_supplier:
+            reorder.status = AutoReorderRequest.STATUS_EXHAUSTED
+            reorder.completed_at = now
+            reorder.save(update_fields=["status", "completed_at", "updated_at"])
+            return {"status": "exhausted"}
+
+        expires_at = now + timedelta(seconds=_auto_order_link_expiry_seconds())
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=next_supplier,
+            priority=supplier_priority or 1,
+            requested_quantity=reorder.remaining_quantity,
+            expires_at=expires_at,
+        )
+
+    response_path = reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
+    response_link = f"{_site_base_url()}{response_path}"
+
+    message = (
+        f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
+        f"{reorder.product.name} is below reorder level in our inventory.\n"
+        f"Requested quantity: {supplier_request.requested_quantity}\n"
+        f"Current stock snapshot: {reorder.current_stock_snapshot}\n"
+        f"Target stock level: {reorder.target_stock_level}\n\n"
+        f"Please confirm your available quantity using this secure link (valid for 1 hour):\n"
+        f"{response_link}\n\n"
+        "If you do not respond before the link expires, the request is automatically sent to the next supplier by priority.\n"
+    )
+
+    try:
+        send_mail(
+            subject=f"Reorder Request: {reorder.product.name}",
+            message=message,
+            from_email=_mail_sender(),
+            recipient_list=[supplier_request.supplier.email],
+            fail_silently=False,
+        )
+    except Exception:
+        logger.exception("Failed to send reorder request email", extra={"supplier_request_id": supplier_request.id})
+        with transaction.atomic():
+            failed = SupplierReorderRequest.objects.select_for_update().filter(pk=supplier_request.id).first()
+            if failed and failed.status == SupplierReorderRequest.STATUS_PENDING:
+                failed.status = SupplierReorderRequest.STATUS_EMAIL_FAILED
+                failed.responded_at = timezone.now()
+                failed.save(update_fields=["status", "responded_at", "updated_at"])
+
+        notify_next_supplier.delay(reorder_request_id)
+        return {"status": "email_failed", "supplier_request_id": supplier_request.id}
+
+    SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
+    expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
+    return {"status": "email_sent", "supplier_request_id": supplier_request.id}
+
+
+@shared_task
+def expire_supplier_request(supplier_request_id: int):
+    now = timezone.now()
+    reorder_id = None
+
+    with transaction.atomic():
+        supplier_request = (
+            SupplierReorderRequest.objects.select_for_update()
+            .select_related("reorder_request")
+            .filter(pk=supplier_request_id)
+            .first()
+        )
+        if not supplier_request:
+            return {"status": "missing_supplier_request"}
+
+        if supplier_request.status != SupplierReorderRequest.STATUS_PENDING:
+            return {"status": "already_processed", "supplier_request_status": supplier_request.status}
+
+        if now <= supplier_request.expires_at:
+            return {"status": "not_expired_yet", "expires_at": supplier_request.expires_at.isoformat()}
+
+        supplier_request.status = SupplierReorderRequest.STATUS_EXPIRED
+        supplier_request.responded_at = now
+        supplier_request.save(update_fields=["status", "responded_at", "updated_at"])
+
+        reorder = supplier_request.reorder_request
+        if reorder.status == AutoReorderRequest.STATUS_OPEN and reorder.remaining_quantity > 0:
+            reorder_id = reorder.id
+
+    if reorder_id:
+        notify_next_supplier.delay(reorder_id)
+
+    return {"status": "expired", "supplier_request_id": supplier_request_id}

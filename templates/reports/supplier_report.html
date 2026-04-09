@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Supplier Report — Pharmtech POS{% endblock %}
+{% block page_title %}Supplier Report{% endblock %}
+{% block content %}
+<div class="card mb-4">
+  <div class="card-header"><h2>Filter</h2></div>
+  <div class="card-body">
+    <form hx-get="{% url 'supplier-report' %}" hx-target="#report-results" hx-swap="innerHTML" class="flex gap-3 items-center">
+      <input type="date" name="start_date" class="form-input" value="{{ start_date }}" required>
+      <span class="text-muted">to</span>
+      <input type="date" name="end_date" class="form-input" value="{{ end_date }}" required>
+      <button type="submit" class="btn btn-primary">Generate</button>
+    </form>
+  </div>
+</div>
+<div id="report-results">{% include "reports/partials/_supplier_table.html" %}</div>
+{% endblock %}
