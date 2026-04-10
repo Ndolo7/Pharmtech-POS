@@ -4,7 +4,13 @@
 
 {% block content %}
 <div class="flex justify-between items-center mb-4">
-  <a class="btn btn-secondary" href="{% url 'product-list' %}">Back to Products</a>
+  <div class="flex gap-2">
+    <a class="btn btn-secondary" href="{% url 'product-list' %}">Back to Products</a>
+    <a class="btn btn-outline" href="{% url 'supplier-prioritize' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Prioritize Suppliers
+    </a>
+  </div>
   <button class="btn btn-primary"
     hx-get="{% url 'supplier-create' %}"
     hx-target="#modal-container"
