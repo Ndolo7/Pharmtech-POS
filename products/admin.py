@@ -4,7 +4,6 @@ from .models import (
     AutoReorderRequest,
     Category,
     Product,
-    ProductSupplierPriority,
     Purchase,
     PurchaseItem,
     Stock,
@@ -30,12 +29,6 @@ class SupplierAdmin(admin.ModelAdmin):
     ordering = ("name",)
 
 
-class ProductSupplierPriorityInline(admin.TabularInline):
-    model = ProductSupplierPriority
-    extra = 1
-    autocomplete_fields = ("supplier",)
-    fields = ("supplier", "priority", "is_active")
-
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
@@ -52,15 +45,9 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
     search_fields = ("name", "barcode")
     ordering = ("name",)
-    inlines = [ProductSupplierPriorityInline]
 
 
-@admin.register(ProductSupplierPriority)
-class ProductSupplierPriorityAdmin(admin.ModelAdmin):
-    list_display = ("product", "supplier", "priority", "is_active")
-    list_filter = ("is_active",)
-    search_fields = ("product__name", "supplier__name")
-    ordering = ("product__name", "priority")
+
 
 
 @admin.register(AutoReorderRequest)

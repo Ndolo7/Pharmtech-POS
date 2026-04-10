@@ -25,6 +25,7 @@ class Supplier(models.Model):
     phone_number = models.CharField(max_length=15)
     email = models.EmailField()
     address = models.TextField()
+    priority = models.PositiveIntegerField(default=1000)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -51,25 +52,6 @@ class Product(models.Model):
         if branch:
             return self.stock_set.filter(branch=branch).aggregate(total=models.Sum("quantity"))["total"] or 0
         return self.stock_set.aggregate(total=models.Sum("quantity"))["total"] or 0
-
-
-class ProductSupplierPriority(models.Model):
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="supplier_priorities")
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name="product_priorities")
-    priority = models.PositiveIntegerField(default=1)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["product_id", "priority", "id"]
-        constraints = [
-            models.UniqueConstraint(fields=["product", "supplier"], name="uniq_product_supplier"),
-            models.UniqueConstraint(fields=["product", "priority"], name="uniq_product_supplier_priority"),
-        ]
-
-    def __str__(self):
-        return f"{self.product.name} -> {self.supplier.name} (P{self.priority})"
 
 
 class AutoReorderRequest(models.Model):
@@ -128,6 +110,7 @@ class SupplierReorderRequest(models.Model):
     priority = models.PositiveIntegerField()
     requested_quantity = models.PositiveIntegerField()
     fulfilled_quantity = models.PositiveIntegerField(default=0)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     emailed_at = models.DateTimeField(null=True, blank=True)

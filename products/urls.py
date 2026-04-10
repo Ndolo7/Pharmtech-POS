@@ -13,6 +13,7 @@ urlpatterns = [
     path("transfer/", views.transfer_stock_view, name="transfer-stock"),
     path("suppliers/", views.supplier_list_view, name="supplier-list"),
     path("suppliers/create/", views.supplier_create_view, name="supplier-create"),
+    path("suppliers/prioritize/", views.supplier_prioritize_view, name="supplier-prioritize"),
     path("suppliers/<int:pk>/edit/", views.supplier_edit_view, name="supplier-edit"),
     path("categories/", views.category_list_view, name="category-list"),
     path("categories/create/", views.category_create_view, name="category-create"),
