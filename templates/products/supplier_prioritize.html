@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Global Supplier Priorities — Pharmtech POS{% endblock %}
+{% block page_title %}Global Supplier Priorities{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+<script>
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('supplierPriority', () => ({
+      initSortable() {
+        new Sortable(document.getElementById('ranked-list'), {
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+        });
+      }
+    }));
+  });
+</script>
+<style>
+  .sortable-ghost { opacity: 0.4; background: var(--gray-50); border: 2px dashed var(--primary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="flex items-center gap-2">
+    <a class="btn btn-secondary" href="{% url 'supplier-list' %}">&larr; Back to Suppliers</a>
+  </div>
+</div>
+
+<div class="card p-6" x-data="supplierPriority()" x-init="initSortable()" style="padding: 24px;">
+  <p class="text-muted mb-4">Drag and drop suppliers to rank their priority hierarchy (Top to Bottom).<br>The system will contact the top item first across all inventory shortages.</p>
+
+  <form method="post" action="{% url 'supplier-prioritize' %}">
+    {% csrf_token %}
+    <div style="border:2px solid var(--primary); border-radius:8px; background:#eff6ff; overflow:hidden; max-width: 600px; margin-bottom:24px;">
+      <div style="padding:12px; border-bottom:1px solid #bfdbfe; font-weight:600; font-size:13px; color:var(--primary-dark); background:#dbeafe;">
+        Global Supplier Priorities (Highest to Lowest)
+      </div>
+      <div id="ranked-list" style="padding:12px; display:flex; flex-direction:column; gap:8px;">
+        {% for supplier in suppliers %}
+        <div class="draggable-item" style="padding:10px 14px; background:#fff; border:1px solid #bfdbfe; border-radius:6px; cursor:grab; font-size:13px; display:flex; align-items:center; gap:10px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" width="14" height="14" style="flex-shrink:0;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          <strong style="color:var(--primary-dark)">{{ supplier.name }}</strong>
+          <span class="text-muted text-sm ml-auto">{{ supplier.contact_person }}</span>
+          <input type="hidden" name="supplier_id" value="{{ supplier.id }}">
+        </div>
+        {% empty %}
+        <div class="text-muted text-sm text-center" style="padding:20px;">No suppliers found.</div>
+        {% endfor %}
+      </div>
+    </div>
+    
+    <button type="submit" class="btn btn-primary" onclick="document.querySelectorAll('#ranked-list input').forEach(el => el.name = 'supplier_id');">
+      Save Global Priorities
+    </button>
+  </form>
+</div>
+{% endblock %}

@@ -11,7 +11,7 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
-  <div class="app-container" x-data="{ sidebarOpen: false }">
+  <div class="app-container" x-data="{ sidebarOpen: false, sidebarCollapsed: false }" :class="{'sidebar-collapsed': sidebarCollapsed}">
     <!-- mobile overlay -->
     <div class="mobile-overlay" :class="{'open': sidebarOpen}" @click="sidebarOpen = false"></div>
     {% include "partials/_sidebar.html" %}

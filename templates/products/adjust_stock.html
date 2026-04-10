@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Adjust Stock — Pharmtech POS{% endblock %}
+{% block page_title %}Adjust Stock{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <div class="flex items-center gap-2">
+    <a class="btn btn-secondary" href="{% url 'stock-list' %}">&larr; Back to Stock</a>
+  </div>
+</div>
+
+<div class="card p-6" style="max-width: 600px; margin: 0 auto; padding: 24px;">
+  <h2 class="mb-4" style="font-size: 18px; font-weight: 600; color: var(--gray-800); border-bottom: 1px solid var(--gray-200); padding-bottom: 12px; margin-bottom: 24px;">Adjust Stock Manually</h2>
+  
+  {% include "products/partials/_adjust_form.html" %}
+</div>
+{% endblock %}

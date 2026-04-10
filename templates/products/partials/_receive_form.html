@@ -1,20 +1,32 @@
-<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
-  <div class="modal" style="max-width:680px">
-    <div class="modal-header">
-      <h3>Receive Stock</h3>
-      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+<div {% if request.htmx %}class="modal-backdrop"{% endif %} x-data {% if request.htmx %}@click.self="document.getElementById('modal-container').innerHTML=''"{% endif %}>
+  <div {% if request.htmx %}class="modal" style="max-width:680px"{% endif %}>
+    <div class="{% if request.htmx %}modal-header{% else %}mb-4 border-b pb-2{% endif %}">
+      <h3 {% if not request.htmx %}class="text-lg font-bold"{% endif %}>Receive Stock</h3>
+      {% if request.htmx %}<button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>{% endif %}
     </div>
-    <div class="modal-body">
+    <div class="{% if request.htmx %}modal-body{% endif %}">
       <form method="post"
         hx-post="{% url 'receive-stock' %}"
         hx-swap="none"
         hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
         {% csrf_token %}
-        {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
-        {% if active_branch %}
-        <div class="message message-info" style="margin-bottom:12px;max-width:none">
-          Receiving stock for: <strong>{{ active_branch.name }}</strong>
+        {% if all_branches %}
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Receiving Branch *</label>
+          <select name="branch_id" class="form-input" required>
+            <option value="">Select branch</option>
+            {% for b in all_branches %}
+              <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
+            {% endfor %}
+          </select>
         </div>
+        {% else %}
+          {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
+          {% if active_branch %}
+          <div class="message message-info" style="margin-bottom:12px;max-width:none">
+            Receiving stock for: <strong>{{ active_branch.name }}</strong>
+          </div>
+          {% endif %}
         {% endif %}
         <div class="form-row">
           <div class="form-group">

@@ -8,7 +8,7 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import AutoReorderRequest, Product, ProductSupplierPriority, Supplier, SupplierReorderRequest
+from .models import AutoReorderRequest, Product, Supplier, SupplierReorderRequest
 
 logger = logging.getLogger(__name__)
 
@@ -126,25 +126,8 @@ def notify_next_supplier(reorder_request_id: int):
             pending.save(update_fields=["status", "responded_at", "updated_at"])
 
         attempted_supplier_ids = reorder.supplier_requests.values_list("supplier_id", flat=True)
-        prioritized_supplier_qs = ProductSupplierPriority.objects.select_related("supplier").filter(
-            product=reorder.product,
-            is_active=True,
-        )
-
-        next_supplier = None
-        supplier_priority = None
-        if prioritized_supplier_qs.exists():
-            next_priority = (
-                prioritized_supplier_qs.exclude(supplier_id__in=attempted_supplier_ids)
-                .order_by("priority", "id")
-                .first()
-            )
-            if next_priority:
-                next_supplier = next_priority.supplier
-                supplier_priority = next_priority.priority
-        else:
-            next_supplier = Supplier.objects.exclude(id__in=attempted_supplier_ids).order_by("id").first()
-            supplier_priority = reorder.supplier_requests.count() + 1 if next_supplier else None
+        next_supplier = Supplier.objects.exclude(id__in=attempted_supplier_ids).order_by("priority", "id").first()
+        supplier_priority = next_supplier.priority if next_supplier else None
 
         if not next_supplier:
             reorder.status = AutoReorderRequest.STATUS_EXHAUSTED
@@ -161,6 +144,8 @@ def notify_next_supplier(reorder_request_id: int):
                         status_text = "Ignored (Expired)"
                     elif sq.status in ["partial", "accepted"]:
                         status_text = f"{status_text} - Supplied: {sq.fulfilled_quantity} / {sq.requested_quantity}"
+                        if sq.unit_price:
+                            status_text += f" @ KES {sq.unit_price}"
                     elif sq.status == "rejected":
                         status_text = "Rejected"
                     summary_lines.append(f"- {sq.supplier.name}: {status_text}")
