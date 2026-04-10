@@ -1,57 +1,104 @@
 <aside class="sidebar" :class="{'open': sidebarOpen}">
-  <div class="sidebar-logo">
-    <h1>Pharmtech</h1>
-    <p>Point of Sale System</p>
+  <div class="sidebar-logo flex gap-2 items-center justify-between" style="padding-right: 12px; margin-bottom: 24px;">
+    <div style="padding-left:24px;">
+      <h1 class="menu-text" style="margin:0;">Pharmtech</h1>
+      <p class="menu-text" style="margin:0;">Point of Sale System</p>
+    </div>
+    <button @click="sidebarCollapsed = !sidebarCollapsed" class="desktop-toggle-btn" style="background:none; border:none; color:var(--gray-400); padding:4px; cursor:pointer;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+        <path d="M3 12h18M3 6h18M3 18h18" />
+      </svg>
+    </button>
   </div>
 
   <nav class="sidebar-nav">
-    <a href="/" {% if request.path == "/" %}class="active"{% endif %}>
+    <a href="/" title="Dashboard" {% if request.path == "/" %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-      Dashboard
+      <span class="menu-text">Dashboard</span>
     </a>
-    <a href="/products/" {% if request.path == "/products/" %}class="active"{% endif %}>
+    <a href="/products/" title="Products" {% if request.path == "/products/" %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-      Products
+      <span class="menu-text">Products</span>
     </a>
-    <a href="/sales/" {% if "/sales" in request.path %}class="active"{% endif %}>
+    <a href="/sales/" title="POS / Sales" {% if "/sales" in request.path %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
-      POS / Sales
+      <span class="menu-text">POS / Sales</span>
     </a>
-    <a href="/products/stock/" {% if "/products/stock" in request.path %}class="active"{% endif %}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-      Stock
-    </a>
-    <a href="/reports/sales/" {% if "/reports" in request.path %}class="active"{% endif %}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      Reports
-    </a>
-    <a href="/branches/" {% if "/branches" in request.path %}class="active"{% endif %}>
+
+    <!-- Stock Menu -->
+    <div class="sidebar-menu-group" x-data="{ open: {% if '/products/stock' in request.path or '/products/receive' in request.path or '/products/transfer' in request.path %}true{% else %}false{% endif %} }">
+      <button title="Stock" class="sidebar-dropdown-btn {% if '/products/stock' in request.path or '/products/receive' in request.path or '/products/transfer' in request.path %}active{% endif %}" @click="if(sidebarCollapsed){ sidebarCollapsed = false; open = true; } else { open = !open; }">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span class="menu-text flex-1 text-left">Stock</span>
+        <svg class="dropdown-icon menu-text" :class="{'rotate-180': open}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div x-cloak x-show="open" x-collapse class="sidebar-submenu menu-text">
+        <a href="/products/stock/" title="Stock List" {% if request.path == "/products/stock/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Stock List
+        </a>
+        <a href="/products/receive/" title="Receive Stock" {% if request.path == "/products/receive/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Receive Stock
+        </a>
+        <a href="/products/transfer/" title="Transfer Stock" {% if request.path == "/products/transfer/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/></svg>
+          Transfer Stock
+        </a>
+      </div>
+    </div>
+    
+    <!-- Reports Menu -->
+    <div class="sidebar-menu-group" x-data="{ open: {% if '/reports' in request.path %}true{% else %}false{% endif %} }">
+      <button title="Reports" class="sidebar-dropdown-btn {% if '/reports' in request.path %}active{% endif %}" @click="if(sidebarCollapsed){ sidebarCollapsed = false; open = true; } else { open = !open; }">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="menu-text flex-1 text-left">Reports</span>
+        <svg class="dropdown-icon menu-text" :class="{'rotate-180': open}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div x-cloak x-show="open" x-collapse class="sidebar-submenu menu-text">
+        <a href="/reports/sales/" title="Sales Report" {% if request.path == "/reports/sales/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Sales Report
+        </a>
+        <a href="/reports/suppliers/" title="Supplier Report" {% if request.path == "/reports/supplier/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+          Supplier Report
+        </a>
+        <a href="/reports/shifts/" title="Shift Report" {% if request.path == "/reports/shift/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Shift Report
+        </a>
+      </div>
+    </div>
+
+    <a href="/branches/" title="Branches" {% if "/branches" in request.path %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      Branches
+      <span class="menu-text">Branches</span>
     </a>
     {% if request.user.can_manage_users %}
-    <a href="/products/suppliers/" {% if "/products/suppliers" in request.path %}class="active"{% endif %}>
+    <a href="/products/suppliers/" title="Suppliers" {% if "/products/suppliers" in request.path %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M16 21h5v-5"/><path d="M8 21H3v-5"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
-      Suppliers
+      <span class="menu-text">Suppliers</span>
     </a>
-    <a href="/accounts/users/" {% if "/accounts/users" in request.path %}class="active"{% endif %}>
+    <a href="/accounts/users/" title="Users" {% if "/accounts/users" in request.path %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87m-4-12a4 4 0 010 7.75"/></svg>
-      Users
+      <span class="menu-text">Users</span>
     </a>
     {% endif %}
-    <a href="/accounts/profile/" {% if "/accounts/profile" in request.path %}class="active"{% endif %}>
+    <a href="/accounts/profile/" title="My Profile" {% if "/accounts/profile" in request.path %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      My Profile
+      <span class="menu-text">My Profile</span>
     </a>
   </nav>
 
   <div class="sidebar-user">
-    <strong>{{ request.user.get_full_name|default:request.user.username }}</strong>
-    {{ request.user.get_role_display }}{% if request.user.branch %} · {{ request.user.branch.name }}{% endif %}
-    <form method="post" action="/accounts/logout/" style="margin-top:8px">
+    <strong class="menu-text">{{ request.user.get_full_name|default:request.user.username }}</strong>
+    <span class="menu-text text-sm text-muted" style="display:block;margin-bottom:8px;">{{ request.user.get_role_display }}{% if request.user.branch %} · {{ request.user.branch.name }}{% endif %}</span>
+    <form method="post" action="/accounts/logout/">
       {% csrf_token %}
-      <button type="submit" style="background:none;border:none;color:var(--gray-400);cursor:pointer;font-size:12px;padding:0;">
-        Sign out ->
+      <button type="submit" title="Sign out" style="background:var(--danger-light, #fee2e2); border:1px solid var(--danger, #ef4444); color:var(--danger, #ef4444); cursor:pointer; padding:10px 12px; border-radius:8px; width:100%; display:flex; align-items:center; gap:8px; transition:all 0.2s; font-weight:600; justify-content:center;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="menu-text" style="font-size:14px;">Sign out</span>
       </button>
     </form>
   </div>
