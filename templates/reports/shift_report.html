@@ -5,10 +5,17 @@
 <div class="card mb-4">
   <div class="card-header"><h2>Filter</h2></div>
   <div class="card-body">
-    <form hx-get="{% url 'shift-report' %}" hx-target="#report-results" hx-swap="innerHTML" class="flex gap-3 items-center">
-      <input type="date" name="start_date" class="form-input" value="{{ start_date }}" required>
+    <form hx-get="{% url 'shift-report' %}"
+      hx-target="#report-results"
+      hx-swap="innerHTML"
+      class="flex gap-3 items-center">
+      <div class="form-group" style="margin:0">
+        <input type="date" name="start_date" class="form-input" value="{{ start_date }}" required>
+      </div>
       <span class="text-muted">to</span>
-      <input type="date" name="end_date" class="form-input" value="{{ end_date }}" required>
+      <div class="form-group" style="margin:0">
+        <input type="date" name="end_date" class="form-input" value="{{ end_date }}" required>
+      </div>
       <button type="submit" class="btn btn-primary">Generate</button>
     </form>
   </div>
