@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Transfer Stock — Pharmtech POS{% endblock %}
+{% block page_title %}Transfer Stock{% endblock %}
+
+{% block content %}
+<div class="card p-6" style="max-width: 800px; margin: 0 auto; padding: 24px;">
+  <h2 class="mb-4" style="font-size: 18px; font-weight: 600; color: var(--gray-800); border-bottom: 1px solid var(--gray-200); padding-bottom: 12px; margin-bottom: 24px;">Transfer Stock Between Branches</h2>
+  
+  {% include "products/partials/_transfer_form.html" %}
+</div>
+{% endblock %}
