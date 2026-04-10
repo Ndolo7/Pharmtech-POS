@@ -62,6 +62,12 @@ class SupplierReorderResponseForm(forms.Form):
         widget=forms.RadioSelect,
     )
     quantity = forms.IntegerField(min_value=0, required=False)
+    unit_price = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        widget=forms.NumberInput(attrs={"class": "form-input", "step": "0.01", "placeholder": "100.00"})
+    )
 
     def __init__(self, *args, max_quantity=0, **kwargs):
         super().__init__(*args, **kwargs)
@@ -79,6 +85,7 @@ class SupplierReorderResponseForm(forms.Form):
         cleaned = super().clean()
         can_supply = cleaned.get("can_supply")
         quantity = cleaned.get("quantity")
+        unit_price = cleaned.get("unit_price")
 
         if can_supply == "yes":
             if quantity is None:
@@ -87,8 +94,14 @@ class SupplierReorderResponseForm(forms.Form):
                 self.add_error("quantity", "Quantity must be greater than zero.")
             elif quantity > self.max_quantity:
                 self.add_error("quantity", f"Quantity cannot exceed {self.max_quantity}.")
+                
+            if unit_price is None:
+                self.add_error("unit_price", "Enter the unit price you will charge.")
+            elif unit_price < 0:
+                self.add_error("unit_price", "Unit price cannot be negative.")
         else:
             cleaned["quantity"] = 0
+            cleaned["unit_price"] = None
 
         return cleaned
 

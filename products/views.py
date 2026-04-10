@@ -9,6 +9,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_GET
 
 from branches.models import Branch
 from .forms import (
@@ -202,9 +203,16 @@ def product_edit_view(request, pk):
 
 @login_required
 def receive_stock_view(request):
+    if request.user.get_role_display() == "Cashier":
+        messages.error(request, "Permission denied.")
+        return redirect("/")
+        
     active_branch = _resolve_products_branch(request)
 
     if request.method == "POST":
+        if request.POST.get("branch_id"):
+            active_branch = get_object_or_404(Branch, pk=request.POST["branch_id"])
+        
         changed_products = []
 
         if not active_branch:
@@ -283,12 +291,15 @@ def receive_stock_view(request):
 
     suppliers = Supplier.objects.all()
     products = Product.objects.filter(is_active=True)
+    all_branches = Branch.objects.filter(is_active=True).order_by("name")
+    template_name = "products/partials/_receive_form.html" if request.htmx else "products/receive_stock.html"
     return render(
         request,
-        "products/partials/_receive_form.html",
+        template_name,
         {
             "suppliers": suppliers,
             "products": products,
+            "all_branches": all_branches,
             "active_branch": active_branch,
             "active_branch_id": active_branch.pk if active_branch else "",
         },
@@ -336,9 +347,10 @@ def adjust_stock_view(request, pk):
                 messages.error(request, f"Error: {exc}")
                 return _rows_oob_response(request, [product], branch=branch) if request.htmx else _redirect_with_branch("stock-list", branch)
 
+        template_name = "products/partials/_adjust_form.html" if request.htmx else "products/adjust_stock.html"
         return render(
             request,
-            "products/partials/_adjust_form.html",
+            template_name,
             {
                 "form": form,
                 "product": product,
@@ -349,9 +361,10 @@ def adjust_stock_view(request, pk):
         )
 
     form = AdjustStockForm()
+    template_name = "products/partials/_adjust_form.html" if request.htmx else "products/adjust_stock.html"
     return render(
         request,
-        "products/partials/_adjust_form.html",
+        template_name,
         {
             "form": form,
             "product": product,
@@ -364,18 +377,27 @@ def adjust_stock_view(request, pk):
 
 @login_required
 def transfer_stock_view(request):
+    if request.user.get_role_display() == "Cashier":
+        messages.error(request, "Permission denied.")
+        return redirect("/")
+
     from_branch = _resolve_products_branch(request)
+    template_name = "products/partials/_transfer_form.html" if request.htmx else "products/transfer_stock.html"
+    
     if not from_branch:
         messages.error(request, "You are not assigned to any branch.")
         if request.method == "GET":
-            return render(request, "products/partials/_transfer_form.html", {"blocked": True})
+            return render(request, template_name, {"blocked": True})
         return _rows_oob_response(request, [], branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
 
     active_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
 
     if request.method == "POST":
+        if request.POST.get("from_branch_id"):
+            from_branch = get_object_or_404(Branch, pk=request.POST["from_branch_id"])
+            
         form = TransferStockForm(request.POST)
-        form.fields["to_branch"].queryset = active_branches
+        form.fields["to_branch"].queryset = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk if from_branch else None).order_by("name")
         changed_products = []
 
         if form.is_valid():
@@ -457,13 +479,15 @@ def transfer_stock_view(request):
                 messages.error(request, f"Error: {exc}")
                 return _rows_oob_response(request, changed_products, branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
 
+        all_branches = Branch.objects.filter(is_active=True).order_by("name")
         products = Product.objects.filter(is_active=True).order_by("name")
         return render(
             request,
-            "products/partials/_transfer_form.html",
+            template_name,
             {
                 "form": form,
                 "products": products,
+                "all_branches": all_branches,
                 "branches": active_branches,
                 "active_branch": from_branch,
                 "active_branch_id": from_branch.pk if from_branch else "",
@@ -472,13 +496,15 @@ def transfer_stock_view(request):
 
     form = TransferStockForm()
     form.fields["to_branch"].queryset = active_branches
+    all_branches = Branch.objects.filter(is_active=True).order_by("name")
     products = Product.objects.filter(is_active=True).order_by("name")
     return render(
         request,
-        "products/partials/_transfer_form.html",
+        template_name,
         {
             "form": form,
             "products": products,
+            "all_branches": all_branches,
             "branches": active_branches,
             "active_branch": from_branch,
             "active_branch_id": from_branch.pk if from_branch else "",
@@ -910,3 +936,27 @@ def supplier_reorder_response_view(request, token):
             "message_type": message_type,
         },
     )
+
+
+@login_required
+def supplier_prioritize_view(request):
+    if not getattr(request.user, "can_manage_users", False):
+        messages.error(request, "Permission denied.")
+        return redirect("/")
+        
+    if request.method == "POST":
+        supplier_ids = request.POST.getlist("supplier_id")
+        try:
+            with transaction.atomic():
+                for idx, s_id in enumerate(supplier_ids):
+                    Supplier.objects.filter(id=int(s_id)).update(priority=idx + 1)
+            messages.success(request, f"Global supplier priorities updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating priorities: {e}")
+        return redirect("supplier-prioritize")
+        
+    suppliers = Supplier.objects.all().order_by("priority", "id")
+    
+    return render(request, "products/supplier_prioritize.html", {
+        "suppliers": suppliers,
+    })
