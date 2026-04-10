@@ -114,6 +114,7 @@ EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 ANYMAIL = {
     "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
 }
+ADMIN_EMAIL = config("ADMIN_EMAIL", default="admin@example.com")
 
 # Automated reorder settings
 SITE_BASE_URL = config("SITE_BASE_URL", default="http://localhost:8000")

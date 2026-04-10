@@ -1,7 +1,7 @@
 services:
   web:
     image: ghcr.io/ndolo7/pharmtech-pos:latest
-    command: gunicorn pos_system.wsgi:application --bind 0.0.0.0:8000
+    command: gunicorn pos_system.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 4
     restart: always
     volumes:
       - static_volume:/app/staticfiles

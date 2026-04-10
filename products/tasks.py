@@ -150,6 +150,40 @@ def notify_next_supplier(reorder_request_id: int):
             reorder.status = AutoReorderRequest.STATUS_EXHAUSTED
             reorder.completed_at = now
             reorder.save(update_fields=["status", "completed_at", "updated_at"])
+
+            admin_email = getattr(settings, "ADMIN_EMAIL", None)
+            if admin_email:
+                supplier_responses = reorder.supplier_requests.select_related("supplier").order_by("created_at")
+                summary_lines = []
+                for sq in supplier_responses:
+                    status_text = sq.get_status_display()
+                    if sq.status == "expired":
+                        status_text = "Ignored (Expired)"
+                    elif sq.status in ["partial", "accepted"]:
+                        status_text = f"{status_text} - Supplied: {sq.fulfilled_quantity} / {sq.requested_quantity}"
+                    elif sq.status == "rejected":
+                        status_text = "Rejected"
+                    summary_lines.append(f"- {sq.supplier.name}: {status_text}")
+                
+                supplier_summary = "\n".join(summary_lines) if summary_lines else "No suppliers were contacted."
+
+                try:
+                    send_mail(
+                        subject=f"URGENT: Reorder Failed for {reorder.product.name}",
+                        message=(
+                            f"All listed suppliers for {reorder.product.name} have been exhausted or failed to respond.\n"
+                            f"Reorder Request ID: {reorder.pk}\n"
+                            f"Missing Quantity: {reorder.remaining_quantity}\n\n"
+                            f"Supplier Activity Log:\n{supplier_summary}\n\n"
+                            "Manual intervention is now required."
+                        ),
+                        from_email=_mail_sender(),
+                        recipient_list=[admin_email],
+                        fail_silently=True,
+                    )
+                except Exception:
+                    logger.exception("Failed to send admin exhaustion alert", extra={"reorder_request_id": reorder.id})
+
             return {"status": "exhausted"}
 
         expires_at = now + timedelta(seconds=_auto_order_link_expiry_seconds())
