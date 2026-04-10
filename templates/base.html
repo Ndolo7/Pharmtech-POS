@@ -11,13 +11,24 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container" x-data="{ sidebarOpen: false }">
+    <!-- mobile overlay -->
+    <div class="mobile-overlay" :class="{'open': sidebarOpen}" @click="sidebarOpen = false"></div>
     {% include "partials/_sidebar.html" %}
 
     <!-- Main -->
     <div class="main-content">
       <div class="topbar">
-        <span class="topbar-title">{% block page_title %}{% endblock %}</span>
+        <div class="flex items-center gap-3">
+          <button class="mobile-menu-btn" @click="sidebarOpen = true" aria-label="Open Menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <span class="topbar-title">{% block page_title %}{% endblock %}</span>
+        </div>
         <div class="flex items-center gap-2">{% include "partials/_shift_status_badge.html" %}</div>
       </div>
 
