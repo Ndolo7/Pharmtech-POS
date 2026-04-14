@@ -51,7 +51,16 @@
       <div class="dashboard-shift-grid">
         <div><div class="text-muted text-sm">Started</div><div class="font-medium">{{ active_shift.start_time|date:"H:i" }}</div></div>
         <div><div class="text-muted text-sm">Opening Cash</div><div class="font-medium">KES {{ active_shift.opening_cash|floatformat:2 }}</div></div>
-        <div><div class="text-muted text-sm">Sales</div><div class="font-medium">{{ active_shift.sales_count }}</div></div>
+        <div>
+          <div class="text-muted text-sm" style="cursor: pointer;"
+            hx-get="{% url 'current-shift-sales' %}"
+            hx-target="#session-sales-modal-content"
+            hx-swap="innerHTML"
+            @click="$dispatch('open-session-sales')">
+            Sales
+          </div>
+          <div class="font-medium">{{ active_shift.sales_count }}</div>
+        </div>
       </div>
     </div>
   </div>
