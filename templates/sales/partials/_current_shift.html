@@ -21,7 +21,14 @@
       </div>
       <div>
         <div class="text-muted text-sm">Sales</div>
-        <div class="font-medium">{{ shift.sale_set.count }}</div>
+        <button type="button"
+          class="session-sales-trigger"
+          @click="openSessionSalesModal()"
+          hx-get="{% url 'current-shift-sales' %}"
+          hx-target="#session-sales-modal-content"
+          hx-swap="innerHTML">
+          {{ shift.sale_set.count }}
+        </button>
       </div>
     </div>
     {% else %}
