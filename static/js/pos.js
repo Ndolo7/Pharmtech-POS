@@ -11,6 +11,10 @@ function posTerminal() {
     showCloseShift: false,
     showSessionSalesModal: false,
     uiError: "",
+    saleSuccessVisible: false,
+    saleSuccessMessage: "",
+    saleSuccessTimer: null,
+    lastSaleHandledAt: 0,
 
     init() {
       window.__posTerminal = this;
@@ -41,6 +45,15 @@ function posTerminal() {
         this.syncShiftState();
         this.consumeCartResetSignal();
       });
+
+      if (window.__posSaleProcessedHandler) {
+        document.body.removeEventListener("sale-processed", window.__posSaleProcessedHandler);
+      }
+      this._saleProcessedHandler = (event) => {
+        this.handleSaleProcessed(event?.detail || {});
+      };
+      document.body.addEventListener("sale-processed", this._saleProcessedHandler);
+      window.__posSaleProcessedHandler = this._saleProcessedHandler;
 
       this.consumeCartResetSignal();
     },
@@ -200,12 +213,37 @@ function posTerminal() {
     onSaleComplete(event) {
       this.processing = false;
       if (!event.detail.successful) return;
+      const xhr = event?.detail?.xhr;
       const responseText = event?.detail?.xhr?.responseText || "";
-      const saleCompleted = responseText.includes("data-reset-cart");
+      const triggerHeader = xhr?.getResponseHeader("HX-Trigger") || "";
+      const saleCompleted = responseText.includes("data-reset-cart") || triggerHeader.includes("sale-processed");
+      if (!saleCompleted) return;
+
+      this.handleSaleProcessed({});
+    },
+
+    handleSaleProcessed(detail) {
+      const now = Date.now();
+      if (now - this.lastSaleHandledAt < 1000) return;
+      this.lastSaleHandledAt = now;
+
       this.consumeCartResetSignal();
-      if (saleCompleted) {
+      this.showSaleSuccess(detail?.message || "Sale processed successfully.");
+      window.setTimeout(() => {
         window.location.reload();
+      }, 4300);
+    },
+
+    showSaleSuccess(message) {
+      if (this.saleSuccessTimer) {
+        window.clearTimeout(this.saleSuccessTimer);
       }
+
+      this.saleSuccessMessage = message || "Sale processed successfully.";
+      this.saleSuccessVisible = true;
+      this.saleSuccessTimer = window.setTimeout(() => {
+        this.saleSuccessVisible = false;
+      }, 4000);
     },
 
     resetCart() {
