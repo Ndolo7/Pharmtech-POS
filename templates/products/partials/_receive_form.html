@@ -13,7 +13,11 @@
         {% if all_branches %}
         <div class="form-group" style="margin-bottom:12px;">
           <label>Receiving Branch *</label>
-          <select name="branch_id" class="form-input" required>
+          <select name="branch_id" class="form-input" required
+            hx-get="{% url 'supplier-pending-orders' %}"
+            hx-target="#receive-items"
+            hx-swap="innerHTML"
+            hx-include="[name='supplier_id']">
             <option value="">Select branch</option>
             {% for b in all_branches %}
               <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
@@ -31,7 +35,11 @@
         <div class="form-row">
           <div class="form-group">
             <label>Supplier *</label>
-            <select name="supplier_id" class="form-input" required>
+            <select name="supplier_id" class="form-input search-select" required
+              hx-get="{% url 'supplier-pending-orders' %}" 
+              hx-target="#receive-items"
+              hx-swap="innerHTML"
+              hx-include="[name='branch_id']">
               <option value="">Select supplier</option>
               {% for s in suppliers %}
               <option value="{{ s.id }}">{{ s.name }}</option>
@@ -45,22 +53,8 @@
         </div>
 
         <div id="receive-items">
-          <div class="flex justify-between items-center mb-2">
-            <label class="font-medium">Items</label>
-            <button type="button" class="btn btn-sm btn-outline" onclick="addReceiveRow()">+ Add Item</button>
-          </div>
-          <div id="items-list">
-            <div class="receive-row" style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;margin-bottom:8px">
-              <select name="product_id[]" class="form-input" required>
-                <option value="">Select product</option>
-                {% for p in products %}
-                <option value="{{ p.id }}">{{ p.name }}</option>
-                {% endfor %}
-              </select>
-              <input type="number" name="quantity[]" placeholder="Qty" class="form-input" required min="1">
-              <input type="number" name="unit_cost[]" placeholder="Cost" class="form-input" required step="0.01" min="0">
-              <button type="button" class="btn btn-sm btn-danger" onclick="removeReceiveRow(this)" disabled>✕</button>
-            </div>
+          <div class="message message-info" style="margin-bottom:12px;max-width:none">
+            Please select a supplier above to see the expected orders.
           </div>
         </div>
 
@@ -73,19 +67,4 @@
   </div>
 </div>
 
-<script>
-const productOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
-
-function addReceiveRow() {
-  const clone = document.querySelector('.receive-row').cloneNode(true);
-  clone.querySelectorAll('input').forEach(i => i.value = '');
-  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + productOptions;
-  clone.querySelector('button').disabled = false;
-  document.getElementById('items-list').appendChild(clone);
-}
-
-function removeReceiveRow(btn) {
-  const rows = document.querySelectorAll('.receive-row');
-  if (rows.length > 1) btn.closest('.receive-row').remove();
-}
 </script>
