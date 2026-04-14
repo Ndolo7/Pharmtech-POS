@@ -3,12 +3,14 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
 from .models import AutoReorderRequest, Product, Supplier, SupplierReorderRequest
+from .sms import normalize_phone_numbers, send_sms_via_leopard
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,17 @@ def _mail_sender() -> str:
             getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@pharmtech.local"),
         )
     )
+
+
+def _admin_phone_numbers(admin_email: str | None) -> list[str]:
+    numbers = normalize_phone_numbers(getattr(settings, "ADMIN_PHONE", ""))
+    if admin_email:
+        User = get_user_model()
+        user_phones = User.objects.filter(email__iexact=admin_email).exclude(phone_number="").values_list(
+            "phone_number", flat=True
+        )
+        numbers = normalize_phone_numbers([*numbers, *user_phones])
+    return numbers
 
 
 @shared_task
@@ -151,23 +164,30 @@ def notify_next_supplier(reorder_request_id: int):
                     summary_lines.append(f"- {sq.supplier.name}: {status_text}")
                 
                 supplier_summary = "\n".join(summary_lines) if summary_lines else "No suppliers were contacted."
+                admin_message = (
+                    f"All listed suppliers for {reorder.product.name} have been exhausted or failed to respond.\n"
+                    f"Reorder Request ID: {reorder.pk}\n"
+                    f"Missing Quantity: {reorder.remaining_quantity}\n\n"
+                    f"Supplier Activity Log:\n{supplier_summary}\n\n"
+                    "Manual intervention is now required."
+                )
 
                 try:
                     send_mail(
                         subject=f"URGENT: Reorder Failed for {reorder.product.name}",
-                        message=(
-                            f"All listed suppliers for {reorder.product.name} have been exhausted or failed to respond.\n"
-                            f"Reorder Request ID: {reorder.pk}\n"
-                            f"Missing Quantity: {reorder.remaining_quantity}\n\n"
-                            f"Supplier Activity Log:\n{supplier_summary}\n\n"
-                            "Manual intervention is now required."
-                        ),
+                        message=admin_message,
                         from_email=_mail_sender(),
                         recipient_list=[admin_email],
                         fail_silently=True,
                     )
                 except Exception:
                     logger.exception("Failed to send admin exhaustion alert", extra={"reorder_request_id": reorder.id})
+
+                send_sms_via_leopard(
+                    message=admin_message,
+                    destinations=_admin_phone_numbers(admin_email),
+                    log_extra={"reorder_request_id": reorder.id},
+                )
 
             return {"status": "exhausted"}
 
@@ -185,13 +205,8 @@ def notify_next_supplier(reorder_request_id: int):
 
     message = (
         f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
-        f"{reorder.product.name} is below reorder level in our inventory.\n"
-        f"Requested quantity: {supplier_request.requested_quantity}\n"
-        f"Current stock snapshot: {reorder.current_stock_snapshot}\n"
-        f"Target stock level: {reorder.target_stock_level}\n\n"
-        f"Please confirm your available quantity using this secure link (valid for 1 hour):\n"
+        f"Please confirm your available quantity to supply using this secure link (valid for 1 hour:\n"
         f"{response_link}\n\n"
-        "If you do not respond before the link expires, the request is automatically sent to the next supplier by priority.\n"
     )
 
     try:
@@ -213,6 +228,12 @@ def notify_next_supplier(reorder_request_id: int):
 
         notify_next_supplier.delay(reorder_request_id)
         return {"status": "email_failed", "supplier_request_id": supplier_request.id}
+
+    send_sms_via_leopard(
+        message=message,
+        destinations=supplier_request.supplier.phone_number,
+        log_extra={"supplier_request_id": supplier_request.id},
+    )
 
     SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
     expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
