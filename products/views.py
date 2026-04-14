@@ -38,26 +38,53 @@ from .models import (
 from .tasks import notify_next_supplier
 
 
+def _to_non_negative_int(value):
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _branch_pending_packets(supplier_request, branch):
+    if not branch:
+        return supplier_request.pending_quantity
+
+    branch_requirements = supplier_request.reorder_request.branch_requirements or {}
+    if not isinstance(branch_requirements, dict) or not branch_requirements:
+        return supplier_request.pending_quantity
+
+    return _to_non_negative_int(branch_requirements.get(branch.name, 0))
+
+
 @login_required
 @require_GET
 def supplier_pending_orders_view(request):
     supplier_id = request.GET.get("supplier_id")
     if not supplier_id:
         return HttpResponse("")
-        
+
     supplier = get_object_or_404(Supplier, pk=supplier_id)
+    active_branch = _resolve_products_branch(request)
     pending_requests = []
-    
+
     orders = SupplierReorderRequest.objects.filter(
         supplier=supplier,
         status__in=[SupplierReorderRequest.STATUS_ACCEPTED, SupplierReorderRequest.STATUS_PARTIAL]
-    ).select_related("reorder_request__product")
-    
+    ).select_related("reorder_request", "reorder_request__product")
+
     for order in orders:
         if order.pending_quantity > 0:
+            branch_pending_quantity = _branch_pending_packets(order, active_branch)
+            if branch_pending_quantity <= 0:
+                continue
+            order.branch_pending_quantity = min(order.pending_quantity, branch_pending_quantity)
             pending_requests.append(order)
-            
-    return render(request, "products/partials/_pending_order_rows.html", {"pending_requests": pending_requests})
+
+    return render(
+        request,
+        "products/partials/_pending_order_rows.html",
+        {"pending_requests": pending_requests},
+    )
 
 @login_required
 def manual_order_create_view(request):
@@ -116,7 +143,13 @@ def _can_select_products_branch(user):
 
 
 def _resolve_products_branch(request):
-    selected_branch_id = (request.GET.get("branch") or request.POST.get("branch_id") or "").strip()
+    selected_branch_id = (
+        request.GET.get("branch")
+        or request.GET.get("branch_id")
+        or request.POST.get("branch_id")
+        or request.POST.get("branch")
+        or ""
+    ).strip()
     can_select_branch = _can_select_products_branch(request.user)
     active_branches = Branch.objects.filter(is_active=True).order_by("name")
 
@@ -276,13 +309,14 @@ def receive_stock_view(request):
     if request.user.get_role_display() == "Cashier":
         messages.error(request, "Permission denied.")
         return redirect("/")
-        
+
+    can_select_branch = _can_select_products_branch(request.user)
     active_branch = _resolve_products_branch(request)
 
     if request.method == "POST":
-        if request.POST.get("branch_id"):
+        if request.POST.get("branch_id") and can_select_branch:
             active_branch = get_object_or_404(Branch, pk=request.POST["branch_id"])
-        
+
         changed_products = []
 
         if not active_branch:
@@ -311,11 +345,19 @@ def receive_stock_view(request):
                         raise ValueError("Quantity cannot be negative.")
                     if qty_int == 0:
                         continue
-                        
+
                     sup_req = SupplierReorderRequest.objects.select_for_update().get(pk=req_id)
-                    if qty_int > sup_req.pending_quantity:
-                        raise ValueError(f"Cannot receive more than ordered for {sup_req.reorder_request.product.name}.")
-                        
+                    branch_pending_packets = _branch_pending_packets(sup_req, active_branch)
+                    max_allowed_packets = min(sup_req.pending_quantity, branch_pending_packets)
+                    if max_allowed_packets <= 0:
+                        raise ValueError(
+                            f"{sup_req.reorder_request.product.name} is not pending for {active_branch.name}."
+                        )
+                    if qty_int > max_allowed_packets:
+                        raise ValueError(
+                            f"Cannot receive more than {max_allowed_packets} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
+                        )
+
                     unit_cost = sup_req.unit_price or 0
                     total_amount += qty_int * float(unit_cost)
                     cleaned_lines.append((sup_req, qty_int, float(unit_cost)))
@@ -337,6 +379,18 @@ def receive_stock_view(request):
 
                     sup_req.received_quantity += qty_int
                     sup_req.save(update_fields=["received_quantity", "updated_at"])
+
+                    reorder_request = sup_req.reorder_request
+                    branch_requirements = reorder_request.branch_requirements or {}
+                    if (
+                        active_branch
+                        and isinstance(branch_requirements, dict)
+                        and active_branch.name in branch_requirements
+                    ):
+                        remaining_branch_packets = _to_non_negative_int(branch_requirements.get(active_branch.name)) - qty_int
+                        branch_requirements[active_branch.name] = max(remaining_branch_packets, 0)
+                        reorder_request.branch_requirements = branch_requirements
+                        reorder_request.save(update_fields=["branch_requirements", "updated_at"])
 
                     actual_units_received = qty_int * product.pack_quantity
 
@@ -373,7 +427,7 @@ def receive_stock_view(request):
 
     suppliers = Supplier.objects.all()
     products = Product.objects.filter(is_active=True)
-    all_branches = Branch.objects.filter(is_active=True).order_by("name")
+    all_branches = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else None
     template_name = "products/partials/_receive_form.html" if request.htmx else "products/receive_stock.html"
     return render(
         request,
