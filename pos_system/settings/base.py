@@ -50,6 +50,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
+    "pos_system.middleware.HtmxSuccessAutoRefreshMiddleware",
 ]
 
 ROOT_URLCONF = "pos_system.urls"
