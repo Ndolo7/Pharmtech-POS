@@ -5,6 +5,15 @@
   </button>
 </div>
 
+<template x-if="uiError">
+  <div class="message message-error" style="margin:10px 10px 0;max-width:none;display:block">
+    <div class="flex justify-between items-center gap-2">
+      <span x-text="uiError"></span>
+      <button type="button" class="btn-icon" @click="clearUiError()">✕</button>
+    </div>
+  </div>
+</template>
+
 <div class="cart-items">
   <template x-if="cart.length === 0">
     <div class="empty-state" style="padding:40px 20px">
@@ -22,10 +31,19 @@
         </div>
         <div class="qty-control">
           <button class="qty-btn" @click="updateQty(item.id, item.quantity - 1)">−</button>
-          <span x-text="item.quantity" style="font-weight:600;min-width:24px;text-align:center"></span>
+          <input type="number"
+            min="1"
+            class="qty-input"
+            :class="isQtyInputInvalid(item) ? 'invalid' : ''"
+            x-model="item.qtyInput"
+            @input="commitManualQty(item.id)"
+            @keyup.enter="commitManualQty(item.id)">
           <button class="qty-btn" @click="updateQty(item.id, item.quantity + 1)">+</button>
           <button class="btn-icon" @click="removeItem(item.id)" style="margin-left:4px;color:var(--danger)">✕</button>
         </div>
+      </div>
+      <div class="text-danger text-sm mt-1" x-show="isQtyInputInvalid(item)">
+        Quantity must be between 1 and <span x-text="item.stock"></span>.
       </div>
       <div class="flex justify-end mt-1">
         <span style="font-weight:600;font-size:13px">KES <span x-text="(item.quantity * item.price).toFixed(2)"></span></span>
