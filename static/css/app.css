@@ -518,11 +518,40 @@ tbody tr:last-child td { border-bottom: none; }
   padding: 0;
 }
 .session-sales-trigger:hover { text-decoration: underline; }
+.session-sales-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.session-sales-tab {
+  border: 1px solid var(--gray-300);
+  background: #fff;
+  color: var(--gray-700);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.session-sales-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
 .session-sales-summary {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-bottom: 14px;
+}
+.session-sales-summary-table th,
+.session-sales-summary-table td {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.session-sales-summary-table th {
+  background: #fff;
+  color: var(--gray-600);
 }
 .session-sales-sale-card {
   border: 1px solid var(--gray-200);
