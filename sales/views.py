@@ -189,12 +189,18 @@ def process_sale_view(request):
             for item in normalized_cart
         ]
 
-        return render(request, "sales/partials/_receipt.html", {
+        response = render(request, "sales/partials/_receipt.html", {
             "sale": sale,
             "receipt_number": receipt_number,
             "cart": receipt_items,
             "total_amount": total_amount,
         })
+        # POS handles delayed refresh in frontend so the success popup remains visible.
+        response["X-Skip-HX-Refresh"] = "true"
+        response["HX-Trigger"] = json.dumps(
+            {"sale-processed": {"message": f"Sale {receipt_number} successful."}}
+        )
+        return response
 
     except Exception as e:
         return _error_fragment(f"Error: {e}")
