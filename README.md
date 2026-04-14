@@ -70,12 +70,19 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
 # Brevo (used by Anymail in production)
 BREVO_API_KEY=your_brevo_api_key
+ADMIN_EMAIL=admin@example.com
+ADMIN_PHONE=254700000001
 
 # Automated reorder settings
 SITE_BASE_URL=http://localhost:8000
 AUTO_ORDER_CHECK_INTERVAL_MINUTES=15
 AUTO_ORDER_LINK_EXPIRY_SECONDS=3600
 AUTO_ORDER_EMAIL_FROM=noreply@pharmtech.local
+
+# SMS Leopard (for supplier/admin SMS alerts)
+SMS_LEOPARD_API_KEY=your_sms_leopard_api_key
+SMS_LEOPARD_API_SECRET=your_sms_leopard_api_secret
+SMS_LEOPARD_SOURCE=SMS_Leopard
 ```
 
 Optional email settings for real supplier notifications:
