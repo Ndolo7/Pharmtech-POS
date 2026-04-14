@@ -4,7 +4,7 @@ from django.db.models import Sum, Count
 from django.utils import timezone
 from datetime import datetime, timedelta
 from sales.models import Sale, Shift
-from products.models import Purchase
+from products.models import Purchase, Supplier
 
 
 @login_required
@@ -121,14 +121,20 @@ def sales_report_view(request):
 def supplier_report_view(request):
     data = None
     errors = None
+    supplier_id = request.GET.get("supplier_id")
     start_date = request.GET.get("start_date")
     end_date = request.GET.get("end_date")
+    suppliers = Supplier.objects.all().order_by("name")
 
     if start_date and end_date:
         try:
             sd = datetime.strptime(start_date, "%Y-%m-%d").date()
             ed = datetime.strptime(end_date, "%Y-%m-%d").date()
             qs = Purchase.objects.filter(created_at__date__gte=sd, created_at__date__lte=ed)
+            
+            if supplier_id and supplier_id != "all":
+                qs = qs.filter(supplier_id=supplier_id)
+                
             if request.user.branch:
                 qs = qs.filter(branch=request.user.branch)
 
@@ -148,7 +154,14 @@ def supplier_report_view(request):
         except ValueError:
             errors = "Invalid date format."
 
-    ctx = {"data": data, "errors": errors, "start_date": start_date, "end_date": end_date}
+    ctx = {
+        "data": data, 
+        "errors": errors, 
+        "start_date": start_date, 
+        "end_date": end_date,
+        "suppliers": suppliers,
+        "supplier_id": supplier_id
+    }
     if request.htmx:
         return render(request, "reports/partials/_supplier_table.html", ctx)
     return render(request, "reports/supplier_report.html", ctx)
