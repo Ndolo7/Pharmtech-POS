@@ -1,0 +1,24 @@
+{% if pending_requests %}
+  <div class="flex justify-between items-center mb-2">
+    <label class="font-medium">Items Expected from Supplier</label>
+  </div>
+  <div id="items-list">
+    <div style="display:grid;grid-template-columns:3fr 1fr 1fr;gap:8px;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--gray-500)">
+      <div>PRODUCT</div>
+      <div>QTY (PACKETS)</div>
+      <div>UNIT PRICE</div>
+    </div>
+    {% for req in pending_requests %}
+    <div class="receive-row" style="display:grid;grid-template-columns:3fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      <input type="hidden" name="reorder_request_id[]" value="{{ req.id }}">
+      <input type="text" class="form-input" readonly style="background:var(--gray-50)" value="{{ req.reorder_request.product.name }}">
+      <input type="number" name="quantity[]" class="form-input" required min="0" max="{{ req.pending_quantity }}" value="{{ req.pending_quantity }}">
+      <div class="form-input" style="background:var(--gray-50);display:flex;align-items:center">{{ req.unit_price|default:"0.00" }}</div>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="message message-info" style="margin-bottom:12px;max-width:none">
+    No accepted pending orders found for this supplier.
+  </div>
+{% endif %}
