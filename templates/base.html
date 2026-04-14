@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.default.min.css" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -41,6 +42,26 @@
         &copy; {% now "Y" %} Pharmtech POS &nbsp;·&nbsp;
         Developed with ❤️ by <a href="https://www.avenasoftware.co.ke/" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;font-weight:500;">Avena Softwares</a>
       </footer>
+    </div>
+  </div>
+
+  <div id="modal-container"></div>
+  <div class="modal-backdrop"
+    x-data="{ showSessionSalesModal: false }"
+    x-show="showSessionSalesModal"
+    @open-session-sales.window="showSessionSalesModal=true"
+    @close-session-sales.window="showSessionSalesModal=false"
+    style="display:none"
+    @click.self="showSessionSalesModal=false"
+    @keydown.escape.window="showSessionSalesModal=false">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>Session Sales</h3>
+        <button type="button" class="btn btn-secondary btn-sm" @click="showSessionSalesModal=false">Close</button>
+      </div>
+      <div class="modal-body" id="session-sales-modal-content">
+        <div class="text-sm text-muted">Select the sales count to load records for this session.</div>
+      </div>
     </div>
   </div>
 
@@ -111,6 +132,22 @@
 
     bindPasswordToggles(document);
     document.body.addEventListener("htmx:afterSwap", (event) => bindPasswordToggles(event.target));
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+  <script>
+    function initTomSelect(root) {
+      const selects = (root || document).querySelectorAll('.search-select:not(.tomselected)');
+      selects.forEach(s => new TomSelect(s, { 
+          create: false, 
+          sortField: { field: "text", direction: "asc" },
+          onChange: function(value) {
+            htmx.trigger(this.input, 'change');
+          }
+      }));
+    }
+    document.addEventListener("DOMContentLoaded", () => initTomSelect(document));
+    document.body.addEventListener("htmx:afterSwap", (event) => initTomSelect(event.target));
   </script>
 
   {% block extra_js %}{% endblock %}
