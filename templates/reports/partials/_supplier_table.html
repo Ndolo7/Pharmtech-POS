@@ -1,4 +1,6 @@
-{% if data %}
+{% if errors %}
+  <div class="message message-error">{{ errors }}</div>
+{% elif data is not None %}
   {% for supplier in data %}
   <div class="card mb-4">
     <div class="card-header">
@@ -21,6 +23,6 @@
     </div>
   </div>
   {% empty %}
-  <p class="text-muted">No purchases found for this period.</p>
+  <div class="message message-info" style="max-width:none">No purchases found for the selected criteria.</div>
   {% endfor %}
 {% endif %}
