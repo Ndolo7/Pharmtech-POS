@@ -45,21 +45,6 @@
 
   {% include "sales/partials/_shift_modal.html" %}
 
-  <div class="modal-backdrop"
-    x-show="showSessionSalesModal"
-    style="display:none"
-    @click.self="showSessionSalesModal=false"
-    @keydown.escape.window="showSessionSalesModal=false">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <h3>Session Sales</h3>
-        <button type="button" class="btn btn-secondary btn-sm" @click="showSessionSalesModal=false">Close</button>
-      </div>
-      <div class="modal-body" id="session-sales-modal-content">
-        <div class="text-sm text-muted">Select the sales count above to load records for this session.</div>
-      </div>
-    </div>
-  </div>
 </div>
 {% endblock %}
 
