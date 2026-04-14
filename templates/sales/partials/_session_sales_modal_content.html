@@ -7,49 +7,85 @@
   <p>No sales recorded in this shift yet.</p>
 </div>
 {% else %}
-<div class="session-sales-summary">
-  <div>
-    <div class="text-muted text-sm">Sales in Session</div>
-    <div class="font-medium">{{ sales|length }}</div>
-  </div>
-  <div>
-    <div class="text-muted text-sm">Shift Started</div>
-    <div class="font-medium">{{ shift.start_time|date:"d M Y H:i" }}</div>
-  </div>
-</div>
-
-<div class="session-sales-list">
-  {% for sale in sales %}
-  <article class="session-sales-sale-card">
-    <div class="session-sales-sale-head">
-      <div>
-        <div class="font-medium">{{ sale.receipt_number }}</div>
-        <div class="text-muted text-sm">{{ sale.created_at|date:"H:i:s" }} · {{ sale.get_payment_method_display }}</div>
-      </div>
-      <div class="font-medium">KES {{ sale.total_amount|floatformat:2 }}</div>
+<div x-data="{ tab: 'details' }">
+  <div class="session-sales-summary">
+    <div>
+      <div class="text-muted text-sm">Sales in Session</div>
+      <div class="font-medium">{{ sales|length }}</div>
     </div>
+    <div>
+      <div class="text-muted text-sm">Shift Started</div>
+      <div class="font-medium">{{ shift.start_time|date:"d M Y H:i" }}</div>
+    </div>
+  </div>
 
-    <table class="session-sales-items">
-      <thead>
-        <tr>
-          <th>Product</th>
-          <th>Qty</th>
-          <th>Unit Price</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in sale.items.all %}
-        <tr>
-          <td>{{ item.product.name }}</td>
-          <td>{{ item.quantity }}</td>
-          <td>KES {{ item.unit_price|floatformat:2 }}</td>
-          <td>KES {{ item.total_price|floatformat:2 }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </article>
-  {% endfor %}
+  <div class="session-sales-tabs">
+    <button type="button" class="session-sales-tab" :class="{ 'active': tab === 'details' }" @click="tab='details'">Details</button>
+    <button type="button" class="session-sales-tab" :class="{ 'active': tab === 'summary' }" @click="tab='summary'">Summary</button>
+  </div>
+
+  <div class="session-sales-list" x-show="tab === 'details'">
+    {% for sale in sales %}
+    <article class="session-sales-sale-card">
+      <div class="session-sales-sale-head">
+        <div>
+          <div class="font-medium">{{ sale.receipt_number }}</div>
+          <div class="text-muted text-sm">{{ sale.created_at|date:"H:i:s" }} · {{ sale.get_payment_method_display }}</div>
+        </div>
+        <div class="font-medium">KES {{ sale.total_amount|floatformat:2 }}</div>
+      </div>
+
+      <table class="session-sales-items">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Unit Price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in sale.items.all %}
+          <tr>
+            <td>{{ item.product.name }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>KES {{ item.unit_price|floatformat:2 }}</td>
+            <td>KES {{ item.total_price|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </article>
+    {% endfor %}
+  </div>
+
+  <div x-show="tab === 'summary'">
+    <div class="table-wrap">
+      <table class="session-sales-summary-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Total Qty</th>
+            <th>Price(s)</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sales_summary %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td>{{ row.quantity }}</td>
+            <td>{{ row.price_display }}</td>
+            <td>KES {{ row.total|floatformat:2 }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="4" class="empty-state" style="padding:18px">No summarized items available.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% endif %}
