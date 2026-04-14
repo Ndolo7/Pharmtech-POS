@@ -65,24 +65,25 @@
         </div>
         
         <div class="supplier-body">
+        <div class="supplier-body">
           <div class="supplier-meta">
             <div class="meta-item">
-              <div class="meta-label">Product Name</div>
-              <div class="meta-value">{{ supplier_request.reorder_request.product.name }}</div>
-            </div>
-            <div class="meta-item">
-              <div class="meta-label">Requested Qty</div>
-              <div class="meta-value" style="color: var(--primary-dark); font-size: 16px;">{{ supplier_request.requested_quantity }} units</div>
-            </div>
-            <div class="meta-item">
               <div class="meta-label">Supplier</div>
-              <div class="meta-value">{{ supplier_request.supplier.name }}</div>
+              <div class="meta-value">{{ supplier.name }}</div>
             </div>
+            {% if can_respond %}
             <div class="meta-item">
-              <div class="meta-label">Link Valid Until</div>
-              <div class="meta-value">{{ supplier_request.expires_at|date:"M j, Y, g:i a" }}</div>
+              <div class="meta-label">Pending Requests</div>
+              <div class="meta-value">{{ pending_requests.count }} product(s)</div>
             </div>
+            {% endif %}
           </div>
+
+          {% if not can_respond and not message %}
+            <div class="message message-error" style="max-width:none; font-size: 16px; font-weight: 600; text-align: center; margin-top: 20px;">
+              You have no pending requests or this link is expired.
+            </div>
+          {% endif %}
 
           {% if message %}
             <div class="message {% if message_type == 'success' %}message-success{% elif message_type == 'error' %}message-error{% elif message_type == 'warning' %}message-warning{% else %}message-info{% endif %}" style="max-width:none;">
@@ -94,39 +95,48 @@
             <form method="post">
               {% csrf_token %}
 
-              <div class="form-group">
-                <label>Can you supply this product?</label>
-                <div class="radio-group" id="can-supply-group">
-                  {% for radio in form.can_supply %}
-                    <div>
-                      {{ radio.tag }}
-                      <label class="radio-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
-                    </div>
-                  {% endfor %}
+              {% for req in pending_requests %}
+              <div class="product-reorder-block" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:20px;">
+                <input type="hidden" name="request_id" value="{{ req.id }}">
+                <div class="meta-item mb-4" style="margin-bottom:12px">
+                  <div class="meta-label">Product Name</div>
+                  <div class="meta-value">{{ req.reorder_request.product.name }}</div>
                 </div>
-                {% if form.can_supply.errors %}<div class="form-errors">{{ form.can_supply.errors }}</div>{% endif %}
-              </div>
-
-              <div id="supply-details" class="conditional-group">
-                <div class="form-group">
-                  <label>Quantity You Can Supply (max {{ max_quantity }})</label>
-                  {{ form.quantity }}
-                  {% if form.quantity.errors %}<div class="form-errors">{{ form.quantity.errors }}</div>{% endif %}
+                <div class="meta-item mb-4" style="margin-bottom:12px">
+                  <div class="meta-label">Requested Qty</div>
+                  <div class="meta-value" style="color: var(--primary-dark); font-size: 16px;">{{ req.requested_quantity }} packet(s)</div>
                 </div>
-
-                <div class="form-group">
-                  <label>Your Selling Price (Unit Price)</label>
-                  <div class="input-wrapper">
-                    <span class="currency">KES</span>
-                    {{ form.unit_price }}
+                {% if req.reorder_request.branch_requirements %}
+                <div class="meta-item mb-4" style="grid-column: 1 / -1; margin-bottom:12px">
+                  <div class="meta-label">Branch Breakdown</div>
+                  <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
+                    {% for b_name, b_qty in req.reorder_request.branch_requirements.items %}
+                      <div>&bull; {{ b_name }}: {{ b_qty }} packet(s)</div>
+                    {% endfor %}
                   </div>
-                  {% if form.unit_price.errors %}<div class="form-errors">{{ form.unit_price.errors }}</div>{% endif %}
+                </div>
+                {% endif %}
+                <div class="form-group mb-4" style="margin-bottom:12px">
+                  <label>Can you supply this product?</label>
+                  <div class="radio-group can-supply-group" data-req-id="{{ req.id }}">
+                    <div>
+                      <input type="radio" name="can_supply_{{ req.id }}" id="can_supply_yes_{{ req.id }}" value="yes" checked>
+                      <label class="radio-label" for="can_supply_yes_{{ req.id }}">Yes</label>
+                    </div>
+                    <div>
+                      <input type="radio" name="can_supply_{{ req.id }}" id="can_supply_no_{{ req.id }}" value="no">
+                      <label class="radio-label" for="can_supply_no_{{ req.id }}">No</label>
+                    </div>
+                  </div>
+                </div>
+                <div id="supply-details-{{ req.id }}" class="conditional-group">
+                  <div class="form-group mb-0">
+                    <label>Quantity You Can Supply (in packets, max {{ req.requested_quantity }})</label>
+                    <input type="number" name="quantity_{{ req.id }}" class="form-input" min="0" max="{{ req.requested_quantity }}" placeholder="Max {{ req.requested_quantity }}">
+                  </div>
                 </div>
               </div>
-
-              {% if form.non_field_errors %}
-                <div class="message message-error" style="max-width:none; margin-bottom:12px;">{{ form.non_field_errors }}</div>
-              {% endif %}
+              {% endfor %}
 
               <button type="submit" class="btn-submit">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -143,22 +153,31 @@
   
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const detailsDiv = document.getElementById('supply-details');
-      if (!detailsDiv) return;
+      const groups = document.querySelectorAll('.can-supply-group');
+      if (!groups.length) return;
       
-      const radios = document.querySelectorAll('input[name="can_supply"]');
-      
-      const updateVisibility = () => {
-        const selected = document.querySelector('input[name="can_supply"]:checked');
-        if (selected && selected.value === 'yes') {
-          detailsDiv.classList.remove('hidden');
-        } else {
-          detailsDiv.classList.add('hidden');
-        }
-      };
-      
-      radios.forEach(r => r.addEventListener('change', updateVisibility));
-      updateVisibility();
+      groups.forEach(group => {
+        const reqId = group.dataset.reqId;
+        const detailsDiv = document.getElementById('supply-details-' + reqId);
+        const radios = document.querySelectorAll(`input[name="can_supply_${reqId}"]`);
+        
+        const updateVisibility = () => {
+          const selected = document.querySelector(`input[name="can_supply_${reqId}"]:checked`);
+          if (selected && selected.value === 'yes') {
+            detailsDiv.classList.remove('hidden');
+            // make underlying input required if needed, or rely on html validation
+            const qtyInput = document.querySelector(`input[name="quantity_${reqId}"]`);
+            if(qtyInput) qtyInput.setAttribute('required', 'required');
+          } else {
+            detailsDiv.classList.add('hidden');
+            const qtyInput = document.querySelector(`input[name="quantity_${reqId}"]`);
+            if(qtyInput) qtyInput.removeAttribute('required');
+          }
+        };
+        
+        radios.forEach(r => r.addEventListener('change', updateVisibility));
+        updateVisibility();
+      });
     });
   </script>
 </body>
