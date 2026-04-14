@@ -23,7 +23,7 @@
         <div class="text-muted text-sm">Sales</div>
         <button type="button"
           class="session-sales-trigger"
-          @click="openSessionSalesModal()"
+          @click="$dispatch('open-session-sales')"
           hx-get="{% url 'current-shift-sales' %}"
           hx-target="#session-sales-modal-content"
           hx-swap="innerHTML">
