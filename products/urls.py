@@ -23,4 +23,6 @@ urlpatterns = [
         views.supplier_reorder_response_view,
         name="supplier-reorder-response",
     ),
+    path("supplier-pending-orders/", views.supplier_pending_orders_view, name="supplier-pending-orders"),
+    path("order/create/", views.manual_order_create_view, name="create-order"),
 ]
