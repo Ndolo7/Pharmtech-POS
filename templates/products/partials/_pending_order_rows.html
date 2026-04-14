@@ -12,7 +12,7 @@
     <div class="receive-row" style="display:grid;grid-template-columns:3fr 1fr 1fr;gap:8px;margin-bottom:8px">
       <input type="hidden" name="reorder_request_id[]" value="{{ req.id }}">
       <input type="text" class="form-input" readonly style="background:var(--gray-50)" value="{{ req.reorder_request.product.name }}">
-      <input type="number" name="quantity[]" class="form-input" required min="0" max="{{ req.pending_quantity }}" value="{{ req.pending_quantity }}">
+      <input type="number" name="quantity[]" class="form-input" required min="0" max="{{ req.branch_pending_quantity|default:req.pending_quantity }}" value="{{ req.branch_pending_quantity|default:req.pending_quantity }}">
       <div class="form-input" style="background:var(--gray-50);display:flex;align-items:center">{{ req.unit_price|default:"0.00" }}</div>
     </div>
     {% endfor %}
