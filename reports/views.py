@@ -3,6 +3,7 @@ from django.shortcuts import render
 from django.db.models import Sum, Count
 from django.utils import timezone
 from datetime import datetime, timedelta
+from decimal import Decimal
 from sales.models import Sale, Shift
 from products.models import Purchase, Supplier
 
@@ -182,18 +183,24 @@ def shift_report_view(request):
                 start_time__date__gte=sd,
                 start_time__date__lte=ed,
                 is_closed=True,
-            ).select_related("cashier")
+            ).select_related("cashier").prefetch_related("expenses")
             if request.user.branch:
                 qs = qs.filter(branch=request.user.branch)
 
             data = []
             for shift in qs:
+                shift_expenses = list(shift.expenses.all())
+                total_expenses = sum((expense.amount for expense in shift_expenses), Decimal("0.00"))
                 data.append({
                     "cashier": shift.cashier.get_full_name() or shift.cashier.username,
                     "date": shift.start_time.strftime("%d %b %Y"),
                     "expected_cash": shift.calculate_expected_cash(),
                     "declared_cash": shift.closing_cash_declared or 0,
                     "cash_variance": shift.cash_variance,
+                    "total_expenses": total_expenses,
+                    "expense_details": "; ".join(
+                        [f"{expense.description} (KES {expense.amount:.2f})" for expense in shift_expenses]
+                    ),
                     "expected_mpesa": shift.calculate_expected_mpesa(),
                     "declared_mpesa": shift.closing_mpesa_declared or 0,
                     "mpesa_variance": shift.mpesa_variance,
