@@ -1,10 +1,11 @@
 from decimal import Decimal
 from io import BytesIO
+from django.apps import apps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -35,6 +36,75 @@ from .models import (
     TransferItem,
 )
 from .tasks import notify_next_supplier
+
+
+@login_required
+@require_GET
+def supplier_pending_orders_view(request):
+    supplier_id = request.GET.get("supplier_id")
+    if not supplier_id:
+        return HttpResponse("")
+        
+    supplier = get_object_or_404(Supplier, pk=supplier_id)
+    pending_requests = []
+    
+    orders = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status__in=[SupplierReorderRequest.STATUS_ACCEPTED, SupplierReorderRequest.STATUS_PARTIAL]
+    ).select_related("reorder_request__product")
+    
+    for order in orders:
+        if order.pending_quantity > 0:
+            pending_requests.append(order)
+            
+    return render(request, "products/partials/_pending_order_rows.html", {"pending_requests": pending_requests})
+
+@login_required
+def manual_order_create_view(request):
+    if not _can_manage_catalog(request.user):
+        return HttpResponseForbidden("Permission denied.")
+
+    Branch = apps.get_model("branches", "Branch")
+    can_select_branch = request.user.can_manage_users()
+    all_branches = Branch.objects.filter(is_active=True) if can_select_branch else None
+    
+    active_branch_id = request.GET.get("branch") or request.POST.get("branch_id")
+    if not can_select_branch:
+        active_branch = request.user.branch
+        active_branch_id = active_branch.id if active_branch else None
+    else:
+        active_branch = Branch.objects.filter(pk=active_branch_id).first() if active_branch_id else None
+
+    if request.method == "POST":
+        product_id = request.POST.get("product_id")
+        packets = int(request.POST.get("packets", 0))
+        if not product_id or packets <= 0 or not active_branch:
+            return HttpResponseBadRequest("Invalid inputs.")
+
+        product = get_object_or_404(Product, pk=product_id)
+
+        with transaction.atomic():
+            reorder = AutoReorderRequest.objects.create(
+                product=product,
+                target_stock_level=product.max_stock,
+                current_stock_snapshot=product.current_stock(),
+                requested_quantity=packets,
+                remaining_quantity=packets,
+                branch_requirements={active_branch.name: packets},
+                status=AutoReorderRequest.STATUS_OPEN,
+            )
+        
+        notify_next_supplier.delay(reorder.id)
+        messages.success(request, f"Manual order for {packets} packet(s) of {product.name} created successfully.")
+        return HttpResponse("")
+
+    products = Product.objects.filter(is_active=True).order_by("name")
+    return render(request, "products/partials/_create_order_form.html", {
+        "products": products,
+        "all_branches": all_branches,
+        "active_branch": active_branch,
+        "active_branch_id": int(active_branch_id) if active_branch_id else None,
+    })
 
 
 def _can_manage_catalog(user):
@@ -223,28 +293,35 @@ def receive_stock_view(request):
             with transaction.atomic():
                 supplier = get_object_or_404(Supplier, pk=request.POST.get("supplier_id"))
                 invoice_number = request.POST.get("invoice_number", "").strip()
-                product_ids = request.POST.getlist("product_id[]")
+                request_ids = request.POST.getlist("reorder_request_id[]")
                 quantities = request.POST.getlist("quantity[]")
-                unit_costs = request.POST.getlist("unit_cost[]")
 
                 if not invoice_number:
                     raise ValueError("Invoice number is required.")
-                if not product_ids:
-                    raise ValueError("Add at least one product line.")
-                if len(product_ids) != len(quantities) or len(product_ids) != len(unit_costs):
+                if not request_ids:
+                    raise ValueError("No pending items found or selected to receive.")
+                if len(request_ids) != len(quantities):
                     raise ValueError("Incomplete stock lines were submitted.")
 
                 total_amount = 0
                 cleaned_lines = []
-                for pid, qty, cost in zip(product_ids, quantities, unit_costs):
+                for req_id, qty in zip(request_ids, quantities):
                     qty_int = int(qty)
-                    cost_float = float(cost)
-                    if qty_int <= 0:
-                        raise ValueError("Quantity must be greater than zero.")
-                    if cost_float < 0:
-                        raise ValueError("Unit cost cannot be negative.")
-                    total_amount += qty_int * cost_float
-                    cleaned_lines.append((pid, qty_int, cost_float))
+                    if qty_int < 0:
+                        raise ValueError("Quantity cannot be negative.")
+                    if qty_int == 0:
+                        continue
+                        
+                    sup_req = SupplierReorderRequest.objects.select_for_update().get(pk=req_id)
+                    if qty_int > sup_req.pending_quantity:
+                        raise ValueError(f"Cannot receive more than ordered for {sup_req.reorder_request.product.name}.")
+                        
+                    unit_cost = sup_req.unit_price or 0
+                    total_amount += qty_int * float(unit_cost)
+                    cleaned_lines.append((sup_req, qty_int, float(unit_cost)))
+
+                if not cleaned_lines:
+                    raise ValueError("List must contain at least one positive quantity item.")
 
                 purchase = Purchase.objects.create(
                     supplier=supplier,
@@ -254,14 +331,19 @@ def receive_stock_view(request):
                     created_by=request.user,
                 )
 
-                for pid, qty_int, cost_float in cleaned_lines:
-                    product = get_object_or_404(Product, pk=pid)
+                for sup_req, qty_int, cost_float in cleaned_lines:
+                    product = sup_req.reorder_request.product
                     changed_products.append(product)
+
+                    sup_req.received_quantity += qty_int
+                    sup_req.save(update_fields=["received_quantity", "updated_at"])
+
+                    actual_units_received = qty_int * product.pack_quantity
 
                     PurchaseItem.objects.create(
                         purchase=purchase,
                         product=product,
-                        quantity=qty_int,
+                        quantity=actual_units_received,
                         unit_cost=cost_float,
                     )
 
@@ -270,14 +352,14 @@ def receive_stock_view(request):
                         branch=active_branch,
                         defaults={"quantity": 0},
                     )
-                    stock.quantity += qty_int
+                    stock.quantity += actual_units_received
                     stock.save(update_fields=["quantity", "updated_at"])
 
                     StockMovement.objects.create(
                         product=product,
                         branch=active_branch,
                         movement_type="purchase",
-                        quantity=qty_int,
+                        quantity=actual_units_received,
                         reference=invoice_number,
                         created_by=request.user,
                     )
@@ -759,126 +841,99 @@ def category_edit_view(request, pk):
 
 
 def supplier_reorder_response_view(request, token):
-    supplier_request = get_object_or_404(
-        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product"),
+    primary_request = get_object_or_404(
+        SupplierReorderRequest.objects.select_related("supplier"),
         token=token,
     )
+    supplier = primary_request.supplier
     now = timezone.now()
-    max_stock = max(int(supplier_request.reorder_request.target_stock_level or supplier_request.reorder_request.product.max_stock or 1), 1)
-    max_quantity = min(max_stock, supplier_request.requested_quantity)
 
-    if supplier_request.status == SupplierReorderRequest.STATUS_PENDING and now > supplier_request.expires_at:
+    # Expire any pending expired requests for this supplier
+    pending_expired = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status=SupplierReorderRequest.STATUS_PENDING,
+        expires_at__lt=now
+    ).select_related("reorder_request")
+
+    for locked_request in pending_expired:
         with transaction.atomic():
-            locked_request = SupplierReorderRequest.objects.select_for_update().filter(pk=supplier_request.pk).first()
-            if (
-                locked_request
-                and locked_request.status == SupplierReorderRequest.STATUS_PENDING
-                and timezone.now() > locked_request.expires_at
-            ):
-                locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
-                locked_request.responded_at = timezone.now()
-                locked_request.save(update_fields=["status", "responded_at", "updated_at"])
-
-                reorder = locked_request.reorder_request
+            locked = SupplierReorderRequest.objects.select_for_update().filter(
+                pk=locked_request.pk, status=SupplierReorderRequest.STATUS_PENDING
+            ).first()
+            if locked:
+                locked.status = SupplierReorderRequest.STATUS_EXPIRED
+                locked.responded_at = now
+                locked.save(update_fields=["status", "responded_at", "updated_at"])
+                reorder = locked.reorder_request
                 if reorder.status == AutoReorderRequest.STATUS_OPEN and reorder.remaining_quantity > 0:
                     notify_next_supplier.delay(reorder.id)
 
-        supplier_request.refresh_from_db()
+    pending_requests = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status=SupplierReorderRequest.STATUS_PENDING,
+        expires_at__gte=now
+    ).select_related("reorder_request__product").order_by("created_at")
 
     if request.method == "POST":
-        form = SupplierReorderResponseForm(request.POST, max_quantity=max_quantity)
-        if form.is_valid():
-            should_escalate = False
+        should_escalate_ids = []
+        feedback_messages = []
+
+        request_ids = request.POST.getlist("request_id")
+        for req_id_str in request_ids:
+            try:
+                req_id = int(req_id_str)
+            except ValueError:
+                continue
+
+            can_supply = request.POST.get(f"can_supply_{req_id}") == "yes"
+            try:
+                quantity = int(request.POST.get(f"quantity_{req_id}") or 0)
+            except ValueError:
+                quantity = 0
 
             with transaction.atomic():
-                locked_request = (
+                locked_req = (
                     SupplierReorderRequest.objects.select_for_update()
-                    .select_related("reorder_request")
-                    .filter(pk=supplier_request.pk)
+                    .select_related("reorder_request__product")
+                    .filter(pk=req_id, supplier=supplier, status=SupplierReorderRequest.STATUS_PENDING)
                     .first()
                 )
-                if not locked_request:
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": supplier_request,
-                            "can_respond": False,
-                            "message_type": "error",
-                            "message": "This supplier request was not found.",
-                        },
-                    )
+                if not locked_req:
+                    continue
 
-                now = timezone.now()
-                if (
-                    locked_request.status != SupplierReorderRequest.STATUS_PENDING
-                    or now > locked_request.expires_at
-                ):
-                    reorder_id = None
-                    if locked_request.status == SupplierReorderRequest.STATUS_PENDING and now > locked_request.expires_at:
-                        locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
-                        locked_request.responded_at = now
-                        locked_request.save(update_fields=["status", "responded_at", "updated_at"])
-                        if (
-                            locked_request.reorder_request.status == AutoReorderRequest.STATUS_OPEN
-                            and locked_request.reorder_request.remaining_quantity > 0
-                        ):
-                            reorder_id = locked_request.reorder_request_id
-                    if reorder_id:
-                        notify_next_supplier.delay(reorder_id)
-                    locked_request.refresh_from_db()
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": locked_request,
-                            "can_respond": False,
-                            "message_type": "error",
-                            "message": "This link is expired or already used.",
-                        },
-                    )
+                if now > locked_req.expires_at:
+                    continue
 
                 reorder = (
                     AutoReorderRequest.objects.select_for_update()
-                    .filter(pk=locked_request.reorder_request_id)
+                    .filter(pk=locked_req.reorder_request_id, status=AutoReorderRequest.STATUS_OPEN)
                     .first()
                 )
-                if not reorder or reorder.status != AutoReorderRequest.STATUS_OPEN:
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": locked_request,
-                            "can_respond": False,
-                            "message_type": "warning",
-                            "message": "This reorder request is no longer active.",
-                        },
-                    )
+                if not reorder:
+                    locked_req.status = SupplierReorderRequest.STATUS_REJECTED
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "responded_at", "updated_at"])
+                    continue
 
-                can_supply = form.cleaned_data["can_supply"] == "yes"
-                quantity = int(form.cleaned_data.get("quantity") or 0)
-                effective_max = min(max_stock, locked_request.requested_quantity, reorder.remaining_quantity)
-                quantity = min(quantity, effective_max)
+                effective_max = min(locked_req.requested_quantity, reorder.remaining_quantity)
+                quantity = min(quantity, effective_max) if can_supply else 0
 
                 if not can_supply or quantity <= 0:
-                    locked_request.status = SupplierReorderRequest.STATUS_REJECTED
-                    locked_request.fulfilled_quantity = 0
-                    locked_request.responded_at = now
-                    locked_request.save(
-                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
-                    )
-                    should_escalate = reorder.remaining_quantity > 0
-                    feedback = "Response received. We will contact the next supplier."
+                    locked_req.status = SupplierReorderRequest.STATUS_REJECTED
+                    locked_req.fulfilled_quantity = 0
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
+                    if reorder.remaining_quantity > 0:
+                        should_escalate_ids.append(reorder.id)
+                    feedback_messages.append(f"{locked_req.reorder_request.product.name}: We will contact the next supplier.")
                 else:
-                    locked_request.fulfilled_quantity = quantity
-                    if quantity < locked_request.requested_quantity:
-                        locked_request.status = SupplierReorderRequest.STATUS_PARTIAL
+                    locked_req.fulfilled_quantity = quantity
+                    if quantity < locked_req.requested_quantity:
+                        locked_req.status = SupplierReorderRequest.STATUS_PARTIAL
                     else:
-                        locked_request.status = SupplierReorderRequest.STATUS_ACCEPTED
-                    locked_request.responded_at = now
-                    locked_request.save(
-                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
-                    )
+                        locked_req.status = SupplierReorderRequest.STATUS_ACCEPTED
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
 
                     reorder.remaining_quantity = max(reorder.remaining_quantity - quantity, 0)
                     if reorder.remaining_quantity == 0:
@@ -887,53 +942,32 @@ def supplier_reorder_response_view(request, token):
                     reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
 
                     if reorder.remaining_quantity > 0:
-                        should_escalate = True
-                        feedback = (
-                            f"Response received. We recorded {quantity} unit(s) and will contact the next supplier "
-                            f"for the remaining {reorder.remaining_quantity}."
-                        )
+                        should_escalate_ids.append(reorder.id)
+                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Will contact next supplier for {reorder.remaining_quantity}.")
                     else:
-                        feedback = f"Thank you. We recorded {quantity} unit(s) for this reorder request."
+                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Request fulfilled.")
 
-            if should_escalate:
-                notify_next_supplier.delay(supplier_request.reorder_request_id)
+        for esc_id in set(should_escalate_ids):
+            notify_next_supplier.delay(esc_id)
 
-            final_request = SupplierReorderRequest.objects.select_related(
-                "supplier", "reorder_request__product"
-            ).get(pk=supplier_request.pk)
-            return render(
-                request,
-                "products/supplier_reorder_response.html",
-                {
-                    "supplier_request": final_request,
-                    "can_respond": False,
-                    "message_type": "success",
-                    "message": feedback,
-                },
-            )
-    else:
-        form = SupplierReorderResponseForm(max_quantity=max_quantity)
-
-    can_respond = (
-        supplier_request.status == SupplierReorderRequest.STATUS_PENDING
-        and timezone.now() <= supplier_request.expires_at
-    )
-    message = ""
-    message_type = "info"
-    if not can_respond:
-        message = "This link is expired or already used."
-        message_type = "error"
+        return render(
+            request,
+            "products/supplier_reorder_response.html",
+            {
+                "supplier": supplier,
+                "can_respond": False,
+                "message_type": "success",
+                "message": "Feedback received successfully. Thank you for your response.",
+            },
+        )
 
     return render(
         request,
         "products/supplier_reorder_response.html",
         {
-            "supplier_request": supplier_request,
-            "form": form,
-            "max_quantity": max_quantity,
-            "can_respond": can_respond,
-            "message": message,
-            "message_type": message_type,
+            "supplier": supplier,
+            "pending_requests": pending_requests,
+            "can_respond": pending_requests.exists(),
         },
     )
 
