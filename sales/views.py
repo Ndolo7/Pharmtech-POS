@@ -259,3 +259,22 @@ def current_shift_view(request):
     shift = _active_shift_for_user(request.user)
     ctx = {"shift": shift, "close_form": CloseShiftForm(), "shift_active": bool(shift)}
     return render(request, "sales/partials/_current_shift.html", ctx)
+
+
+@require_GET
+@login_required
+def current_shift_sales_view(request):
+    shift = _active_shift_for_user(request.user)
+    if not shift:
+        return render(
+            request,
+            "sales/partials/_session_sales_modal_content.html",
+            {"shift": None, "sales": []},
+        )
+
+    sales = shift.sale_set.select_related("cashier").prefetch_related("items__product").order_by("-created_at")
+    return render(
+        request,
+        "sales/partials/_session_sales_modal_content.html",
+        {"shift": shift, "sales": sales},
+    )
