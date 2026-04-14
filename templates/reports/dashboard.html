@@ -59,7 +59,11 @@
             @click="$dispatch('open-session-sales')">
             Sales
           </div>
-          <div class="font-medium">{{ active_shift.sales_count }}</div>
+          <div class="font-medium" style="cursor: pointer;"
+            hx-get="{% url 'current-shift-sales' %}"
+            hx-target="#session-sales-modal-content"
+            hx-swap="innerHTML"
+            @click="$dispatch('open-session-sales')">{{ active_shift.sales_count }}</div>
         </div>
       </div>
     </div>
