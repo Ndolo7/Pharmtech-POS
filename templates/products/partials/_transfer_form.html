@@ -55,7 +55,7 @@
 
         <div id="transfer-items-list">
           <div class="transfer-row" style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:8px">
-            <select name="product_id[]" class="form-input" required>
+            <select name="product_id[]" class="form-input search-select" required>
               <option value="">Select product</option>
               {% for p in products %}
               <option value="{{ p.id }}">{{ p.name }}</option>
@@ -85,11 +85,19 @@
 const transferProductOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
 
 function addTransferRow() {
-  const clone = document.querySelector('.transfer-row').cloneNode(true);
-  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + transferProductOptions;
-  clone.querySelector('input').value = '';
-  clone.querySelector('button').disabled = false;
-  document.getElementById('transfer-items-list').appendChild(clone);
+  const rowHtml = `
+    <div class="transfer-row" style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:8px">
+      <select name="product_id[]" class="form-input search-select" required>
+        <option value="">Select product</option>
+        ${transferProductOptions}
+      </select>
+      <input type="number" name="quantity[]" class="form-input" min="1" required placeholder="Qty">
+      <button type="button" class="btn btn-sm btn-danger" onclick="removeTransferRow(this)">✕</button>
+    </div>
+  `;
+  document.getElementById('transfer-items-list').insertAdjacentHTML('beforeend', rowHtml);
+  const newRow = document.getElementById('transfer-items-list').lastElementChild;
+  if(typeof initTomSelect === 'function') initTomSelect(newRow);
 }
 
 function removeTransferRow(btn) {
