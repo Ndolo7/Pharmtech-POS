@@ -8,7 +8,7 @@
       <form method="post"
         hx-post="{% url 'create-order' %}"
         hx-swap="none"
-        hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; window.location.reload(); }">
+        hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; }">
         {% csrf_token %}
         <div class="form-group">
           <label>Product *</label>
