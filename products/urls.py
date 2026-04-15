@@ -11,6 +11,7 @@ urlpatterns = [
     path("receive/", views.receive_stock_view, name="receive-stock"),
     path("<int:pk>/adjust/", views.adjust_stock_view, name="adjust-stock"),
     path("transfer/", views.transfer_stock_view, name="transfer-stock"),
+    path("transfer/destination-branches/", views.transfer_destination_branches_view, name="transfer-destination-branches"),
     path("suppliers/", views.supplier_list_view, name="supplier-list"),
     path("suppliers/create/", views.supplier_create_view, name="supplier-create"),
     path("suppliers/prioritize/", views.supplier_prioritize_view, name="supplier-prioritize"),
