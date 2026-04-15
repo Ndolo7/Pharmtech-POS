@@ -1,7 +1,9 @@
 import logging
 from datetime import timedelta
+from math import ceil
 
 from celery import shared_task
+from branches.models import Branch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
@@ -44,11 +46,20 @@ def _admin_phone_numbers(admin_email: str | None) -> list[str]:
     return numbers
 
 
+def _packets_needed(deficit_units: int, pack_quantity: int) -> int:
+    safe_pack_quantity = max(int(pack_quantity or 1), 1)
+    safe_deficit = max(int(deficit_units or 0), 0)
+    if safe_deficit <= 0:
+        return 0
+    return int(ceil(safe_deficit / float(safe_pack_quantity)))
+
+
 @shared_task
 def scan_low_stock_and_trigger_reorders():
     now = timezone.now()
     created_count = 0
     resumed_count = 0
+    active_branches = list(Branch.objects.filter(is_active=True).order_by("id"))
 
     for product in Product.objects.filter(is_active=True).order_by("id"):
         pack_quantity = max(int(product.pack_quantity or 1), 1)
@@ -57,14 +68,19 @@ def scan_low_stock_and_trigger_reorders():
 
         total_packets = 0
         branch_requirements = {}
+        stock_by_branch_id = {
+            stock.branch_id: int(stock.quantity or 0)
+            for stock in product.stock_set.filter(branch__is_active=True).only("branch_id", "quantity")
+        }
 
-        for stock in product.stock_set.select_related("branch").filter(branch__is_active=True):
-            if stock.quantity <= reorder_level:
-                deficit = max(max_stock - stock.quantity, 0)
-                packets = int(round(deficit / float(pack_quantity)))
+        for branch in active_branches:
+            branch_stock = stock_by_branch_id.get(branch.id, 0)
+            if branch_stock <= reorder_level:
+                deficit = max(max_stock - branch_stock, 0)
+                packets = _packets_needed(deficit, pack_quantity)
                 if packets > 0:
                     total_packets += packets
-                    branch_requirements[stock.branch.name] = packets
+                    branch_requirements[branch.name] = packets
 
         if total_packets <= 0:
             continue
@@ -86,6 +102,26 @@ def scan_low_stock_and_trigger_reorders():
                     status=SupplierReorderRequest.STATUS_PENDING,
                     expires_at__gt=now,
                 ).exists()
+                fields_to_update = []
+                if existing.target_stock_level != max_stock:
+                    existing.target_stock_level = max_stock
+                    fields_to_update.append("target_stock_level")
+                if existing.current_stock_snapshot != current_stock:
+                    existing.current_stock_snapshot = current_stock
+                    fields_to_update.append("current_stock_snapshot")
+                if existing.branch_requirements != branch_requirements:
+                    existing.branch_requirements = branch_requirements
+                    fields_to_update.append("branch_requirements")
+                if required_quantity > existing.requested_quantity:
+                    existing.requested_quantity = required_quantity
+                    fields_to_update.append("requested_quantity")
+                if required_quantity > existing.remaining_quantity:
+                    existing.remaining_quantity = required_quantity
+                    fields_to_update.append("remaining_quantity")
+
+                if fields_to_update:
+                    existing.save(update_fields=[*fields_to_update, "updated_at"])
+
                 if not has_live_supplier_request and existing.remaining_quantity > 0:
                     reorder_id = existing.id
                     resumed_count += 1
@@ -183,7 +219,7 @@ def notify_next_supplier(reorder_request_id: int):
 
     try:
         send_mail(
-            subject=f"Reorder Request: {reorder.product.name}",
+            subject=f"Reorder Request",
             message=message,
             from_email=_mail_sender(),
             recipient_list=[supplier_request.supplier.email],
