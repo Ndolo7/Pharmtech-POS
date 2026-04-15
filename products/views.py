@@ -1,4 +1,5 @@
-from decimal import Decimal
+import json
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from django.apps import apps
 from django.contrib.auth.decorators import login_required
@@ -54,6 +55,20 @@ def _branch_pending_packets(supplier_request, branch):
         return supplier_request.pending_quantity
 
     return _to_non_negative_int(branch_requirements.get(branch.name, 0))
+
+
+def _normalized_branch_requirements(branch_requirements):
+    if not isinstance(branch_requirements, dict):
+        return []
+
+    payload = []
+    for branch_name, qty in branch_requirements.items():
+        normalized_qty = _to_non_negative_int(qty)
+        if normalized_qty > 0:
+            payload.append((str(branch_name), normalized_qty))
+
+    payload.sort(key=lambda item: item[0].lower())
+    return payload
 
 
 @login_required
@@ -122,6 +137,12 @@ def manual_order_create_view(request):
             )
         
         notify_next_supplier.delay(reorder.id)
+        if request.htmx:
+            return _with_hx_trigger(
+                HttpResponse(""),
+                "stock-action-success",
+                {"message": f"Manual order for {packets} packet(s) of {product.name} created successfully."},
+            )
         messages.success(request, f"Manual order for {packets} packet(s) of {product.name} created successfully.")
         return HttpResponse("")
 
@@ -234,6 +255,25 @@ def _rows_oob_response(request, products, branch=None):
     return HttpResponse(payload)
 
 
+def _with_hx_trigger(response, event_name, detail):
+    if not response:
+        return response
+
+    triggers = {}
+    existing = response.headers.get("HX-Trigger")
+    if existing:
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, dict):
+                triggers.update(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    triggers[event_name] = detail
+    response["HX-Trigger"] = json.dumps(triggers)
+    return response
+
+
 @login_required
 def product_list_view(request):
     search = request.GET.get("q", "").strip()
@@ -329,6 +369,8 @@ def receive_stock_view(request):
                 invoice_number = request.POST.get("invoice_number", "").strip()
                 request_ids = request.POST.getlist("reorder_request_id[]")
                 quantities = request.POST.getlist("quantity[]")
+                cost_prices = request.POST.getlist("cost_price[]")
+                selling_prices = request.POST.getlist("selling_price[]")
 
                 if not invoice_number:
                     raise ValueError("Invoice number is required.")
@@ -336,17 +378,45 @@ def receive_stock_view(request):
                     raise ValueError("No pending items found or selected to receive.")
                 if len(request_ids) != len(quantities):
                     raise ValueError("Incomplete stock lines were submitted.")
+                if len(request_ids) != len(cost_prices) or len(request_ids) != len(selling_prices):
+                    raise ValueError("Incomplete pricing lines were submitted.")
 
-                total_amount = 0
+                total_amount = Decimal("0.00")
                 cleaned_lines = []
-                for req_id, qty in zip(request_ids, quantities):
-                    qty_int = int(qty)
+                for req_id, qty, cost_raw, selling_raw in zip(request_ids, quantities, cost_prices, selling_prices):
+                    try:
+                        qty_int = int(qty)
+                    except (TypeError, ValueError):
+                        raise ValueError("Quantity must be a valid whole number.")
                     if qty_int < 0:
                         raise ValueError("Quantity cannot be negative.")
                     if qty_int == 0:
                         continue
 
                     sup_req = SupplierReorderRequest.objects.select_for_update().get(pk=req_id)
+                    product = sup_req.reorder_request.product
+
+                    try:
+                        cost_dec = Decimal(str(cost_raw).strip())
+                    except (TypeError, ValueError, InvalidOperation):
+                        raise ValueError(f"Invalid cost price for {product.name}.")
+
+                    try:
+                        selling_dec = Decimal(str(selling_raw).strip())
+                    except (TypeError, ValueError, InvalidOperation):
+                        raise ValueError(f"Invalid selling price for {product.name}.")
+
+                    if cost_dec <= 0:
+                        raise ValueError(f"Cost price must be greater than 0 for {product.name}.")
+
+                    pack_quantity = max(int(product.pack_quantity or 1), 1)
+                    cost_per_unit = cost_dec / Decimal(pack_quantity)
+                    min_selling_price = cost_per_unit * Decimal("1.33")
+                    if selling_dec < min_selling_price:
+                        raise ValueError(
+                            f"Selling price for {product.name} must be at least {min_selling_price.quantize(Decimal('0.01'))} (33% above unit cost)."
+                        )
+
                     branch_pending_packets = _branch_pending_packets(sup_req, active_branch)
                     max_allowed_packets = min(sup_req.pending_quantity, branch_pending_packets)
                     if max_allowed_packets <= 0:
@@ -358,9 +428,9 @@ def receive_stock_view(request):
                             f"Cannot receive more than {max_allowed_packets} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
                         )
 
-                    unit_cost = sup_req.unit_price or 0
-                    total_amount += qty_int * float(unit_cost)
-                    cleaned_lines.append((sup_req, qty_int, float(unit_cost)))
+                    actual_units_received = qty_int * product.pack_quantity
+                    total_amount += qty_int * cost_dec
+                    cleaned_lines.append((sup_req, product, qty_int, actual_units_received, cost_dec, cost_per_unit, selling_dec))
 
                 if not cleaned_lines:
                     raise ValueError("List must contain at least one positive quantity item.")
@@ -373,8 +443,7 @@ def receive_stock_view(request):
                     created_by=request.user,
                 )
 
-                for sup_req, qty_int, cost_float in cleaned_lines:
-                    product = sup_req.reorder_request.product
+                for sup_req, product, qty_int, actual_units_received, cost_per_packet_dec, cost_per_unit_dec, selling_dec in cleaned_lines:
                     changed_products.append(product)
 
                     sup_req.received_quantity += qty_int
@@ -392,13 +461,16 @@ def receive_stock_view(request):
                         reorder_request.branch_requirements = branch_requirements
                         reorder_request.save(update_fields=["branch_requirements", "updated_at"])
 
-                    actual_units_received = qty_int * product.pack_quantity
+                    if product.cost_price != cost_per_packet_dec or product.unit_price != selling_dec:
+                        product.cost_price = cost_per_packet_dec
+                        product.unit_price = selling_dec
+                        product.save(update_fields=["cost_price", "unit_price", "updated_at"])
 
                     PurchaseItem.objects.create(
                         purchase=purchase,
                         product=product,
                         quantity=actual_units_received,
-                        unit_cost=cost_float,
+                        unit_cost=cost_per_unit_dec,
                     )
 
                     stock, _ = Stock.objects.get_or_create(
@@ -418,8 +490,15 @@ def receive_stock_view(request):
                         created_by=request.user,
                     )
 
+            if request.htmx:
+                response = _rows_oob_response(request, changed_products, branch=active_branch)
+                return _with_hx_trigger(
+                    response,
+                    "stock-action-success",
+                    {"message": "Stock received successfully."},
+                )
             messages.success(request, "Stock received successfully.")
-            return _rows_oob_response(request, changed_products, branch=active_branch) if request.htmx else _redirect_with_branch("stock-list", active_branch)
+            return _redirect_with_branch("stock-list", active_branch)
 
         except Exception as exc:
             messages.error(request, f"Error: {exc}")
@@ -526,18 +605,37 @@ def transfer_stock_view(request):
             return render(request, template_name, {"blocked": True})
         return _rows_oob_response(request, [], branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
 
-    active_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
+    destination_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
 
     if request.method == "POST":
         if request.POST.get("from_branch_id"):
             from_branch = get_object_or_404(Branch, pk=request.POST["from_branch_id"])
-            
+
+        destination_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
         form = TransferStockForm(request.POST)
-        form.fields["to_branch"].queryset = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk if from_branch else None).order_by("name")
+        form.fields["to_branch"].queryset = Branch.objects.filter(is_active=True).order_by("name")
         changed_products = []
 
         if form.is_valid():
             to_branch = form.cleaned_data["to_branch"]
+            if from_branch and to_branch and from_branch.pk == to_branch.pk:
+                form.add_error("to_branch", "Destination branch must be different from source branch.")
+                all_branches = Branch.objects.filter(is_active=True).order_by("name")
+                products = Product.objects.filter(is_active=True).order_by("name")
+                return render(
+                    request,
+                    template_name,
+                    {
+                        "form": form,
+                        "products": products,
+                        "all_branches": all_branches,
+                        "branches": destination_branches,
+                        "destination_branches": destination_branches,
+                        "selected_to_branch_id": request.POST.get("to_branch", ""),
+                        "active_branch": from_branch,
+                        "active_branch_id": from_branch.pk if from_branch else "",
+                    },
+                )
             notes = form.cleaned_data.get("notes", "")
             product_ids = request.POST.getlist("product_id[]")
             quantities = request.POST.getlist("quantity[]")
@@ -609,8 +707,15 @@ def transfer_stock_view(request):
 
                         changed_products.append(product)
 
+                if request.htmx:
+                    response = _rows_oob_response(request, changed_products, branch=from_branch)
+                    return _with_hx_trigger(
+                        response,
+                        "stock-action-success",
+                        {"message": f"Transfer to {to_branch.name} completed."},
+                    )
                 messages.success(request, f"Transfer to {to_branch.name} completed.")
-                return _rows_oob_response(request, changed_products, branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
+                return _redirect_with_branch("stock-list", from_branch)
             except Exception as exc:
                 messages.error(request, f"Error: {exc}")
                 return _rows_oob_response(request, changed_products, branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
@@ -624,14 +729,16 @@ def transfer_stock_view(request):
                 "form": form,
                 "products": products,
                 "all_branches": all_branches,
-                "branches": active_branches,
+                "branches": destination_branches,
+                "destination_branches": destination_branches,
+                "selected_to_branch_id": request.POST.get("to_branch", ""),
                 "active_branch": from_branch,
                 "active_branch_id": from_branch.pk if from_branch else "",
             },
         )
 
     form = TransferStockForm()
-    form.fields["to_branch"].queryset = active_branches
+    form.fields["to_branch"].queryset = destination_branches
     all_branches = Branch.objects.filter(is_active=True).order_by("name")
     products = Product.objects.filter(is_active=True).order_by("name")
     return render(
@@ -641,9 +748,36 @@ def transfer_stock_view(request):
             "form": form,
             "products": products,
             "all_branches": all_branches,
-            "branches": active_branches,
+            "branches": destination_branches,
+            "destination_branches": destination_branches,
+            "selected_to_branch_id": "",
             "active_branch": from_branch,
             "active_branch_id": from_branch.pk if from_branch else "",
+        },
+    )
+
+
+@login_required
+@require_GET
+def transfer_destination_branches_view(request):
+    from_branch_id = (request.GET.get("from_branch_id") or "").strip()
+    selected_to_branch_id = (
+        request.GET.get("selected_to_branch_id")
+        or request.GET.get("to_branch")
+        or ""
+    ).strip()
+
+    destination_branches = Branch.objects.filter(is_active=True).order_by("name")
+    if from_branch_id:
+        destination_branches = destination_branches.exclude(pk=from_branch_id)
+
+    return render(
+        request,
+        "products/partials/_transfer_destination_field.html",
+        {
+            "destination_branches": destination_branches,
+            "selected_to_branch_id": selected_to_branch_id,
+            "to_branch_errors": "",
         },
     )
 
@@ -922,11 +1056,37 @@ def supplier_reorder_response_view(request, token):
                 if reorder.status == AutoReorderRequest.STATUS_OPEN and reorder.remaining_quantity > 0:
                     notify_next_supplier.delay(reorder.id)
 
-    pending_requests = SupplierReorderRequest.objects.filter(
+    pending_requests_qs = SupplierReorderRequest.objects.filter(
         supplier=supplier,
         status=SupplierReorderRequest.STATUS_PENDING,
         expires_at__gte=now
     ).select_related("reorder_request__product").order_by("created_at")
+    pending_requests = list(pending_requests_qs)
+
+    branch_product_map = {}
+    for pending_request in pending_requests:
+        branch_breakdown = _normalized_branch_requirements(
+            pending_request.reorder_request.branch_requirements or {}
+        )
+        pending_request.branch_breakdown = branch_breakdown
+        for branch_name, qty in branch_breakdown:
+            branch_product_map.setdefault(branch_name, []).append(
+                {
+                    "product_name": pending_request.reorder_request.product.name,
+                    "quantity": qty,
+                }
+            )
+
+    branch_groups = []
+    for branch_name in sorted(branch_product_map.keys(), key=lambda value: value.lower()):
+        branch_items = branch_product_map[branch_name]
+        branch_groups.append(
+            {
+                "name": branch_name,
+                "items": branch_items,
+                "total_packets": sum(item["quantity"] for item in branch_items),
+            }
+        )
 
     if request.method == "POST":
         should_escalate_ids = []
@@ -1012,6 +1172,8 @@ def supplier_reorder_response_view(request, token):
                 "can_respond": False,
                 "message_type": "success",
                 "message": "Feedback received successfully. Thank you for your response.",
+                "branch_groups": [],
+                "pending_count": 0,
             },
         )
 
@@ -1021,7 +1183,9 @@ def supplier_reorder_response_view(request, token):
         {
             "supplier": supplier,
             "pending_requests": pending_requests,
-            "can_respond": pending_requests.exists(),
+            "can_respond": bool(pending_requests),
+            "branch_groups": branch_groups,
+            "pending_count": len(pending_requests),
         },
     )
 
