@@ -91,6 +91,17 @@ body {
   padding: 20px 18px;
   border-bottom: 1px solid rgba(255,255,255,.1);
 }
+.sidebar-brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  margin-bottom: 4px;
+}
 .sidebar-logo h1 { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: -.3px; }
 .sidebar-logo p  { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
 
@@ -163,6 +174,16 @@ body {
   box-shadow: var(--shadow);
 }
 .topbar-title { font-size: 16px; font-weight: 600; color: var(--gray-800); }
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-brand-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
 
 .mobile-overlay { display: none; }
 .mobile-overlay.open {
@@ -363,6 +384,11 @@ tbody tr:last-child td { border-bottom: none; }
   cursor: pointer;
 }
 .toggle-password:hover { color: var(--gray-700); }
+
+/* Keep Tom Select dropdown above report cards/modals */
+.ts-dropdown {
+  z-index: 1200 !important;
+}
 
 /* ── Modal ──────────────────────────────── */
 .modal-backdrop {
@@ -583,8 +609,20 @@ tbody tr:last-child td { border-bottom: none; }
 .login-card { background: #fff; border-radius: 12px; box-shadow: var(--shadow-lg); padding: 40px; width: 100%; max-width: 380px; }
 .login-card h1 { font-size: 22px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }
 .login-card p  { color: var(--gray-400); font-size: 13px; margin-bottom: 28px; }
-.login-logo { width: 48px; height: 48px; background: var(--primary); border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
-.login-logo svg { width: 28px; height: 28px; stroke: #fff; fill: none; }
+.login-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.login-logo img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
 
 /* ── Empty state ─────────────────────────── */
 .empty-state { text-align: center; padding: 60px 20px; color: var(--gray-400); }
