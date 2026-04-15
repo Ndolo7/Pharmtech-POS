@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}POS Terminal — ZIADA POS{% endblock %}
-{% block page_title %}POS Terminal{% endblock %}
+{% block page_title %}
+<span class="topbar-brand">
+  <img src="{% static 'branding/logo.svg' %}" alt="ZIADA logo" class="topbar-brand-logo">
+  <span>POS Terminal</span>
+</span>
+{% endblock %}
 
 {% block extra_css %}
 <style>
