@@ -13,7 +13,7 @@
         <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Close</button>
       </div>
       {% else %}
-      <form method="post"
+      <form id="transfer-stock-form" method="post"
         hx-post="{% url 'transfer-stock' %}"
         hx-swap="none"
         hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
@@ -21,7 +21,11 @@
         {% if all_branches %}
         <div class="form-group" style="margin-bottom:12px;">
           <label>Source Branch *</label>
-          <select name="from_branch_id" class="form-input" required>
+          <select name="from_branch_id" class="form-input" required
+            hx-get="{% url 'transfer-destination-branches' %}"
+            hx-target="#transfer-destination-field"
+            hx-swap="outerHTML"
+            hx-include="[name='from_branch_id'],[name='to_branch']">
             <option value="">Select source branch</option>
             {% for b in all_branches %}
               <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
@@ -37,11 +41,7 @@
           {% endif %}
         {% endif %}
 
-        <div class="form-group">
-          <label>Destination Branch *</label>
-          {{ form.to_branch }}
-          {% if form.to_branch.errors %}<div class="text-danger text-sm">{{ form.to_branch.errors|striptags }}</div>{% endif %}
-        </div>
+        {% include "products/partials/_transfer_destination_field.html" with to_branch_errors=form.to_branch.errors|striptags %}
 
         <div class="form-group">
           <label>Notes</label>
@@ -55,7 +55,7 @@
 
         <div id="transfer-items-list">
           <div class="transfer-row" style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:8px">
-            <select name="product_id[]" class="form-input" required>
+            <select name="product_id[]" class="form-input search-select" required>
               <option value="">Select product</option>
               {% for p in products %}
               <option value="{{ p.id }}">{{ p.name }}</option>
@@ -72,7 +72,7 @@
 
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-primary">Transfer Stock</button>
+          <button type="submit" id="transfer-stock-submit" class="btn btn-primary">Transfer Stock</button>
         </div>
       </form>
       {% endif %}
@@ -85,11 +85,19 @@
 const transferProductOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
 
 function addTransferRow() {
-  const clone = document.querySelector('.transfer-row').cloneNode(true);
-  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + transferProductOptions;
-  clone.querySelector('input').value = '';
-  clone.querySelector('button').disabled = false;
-  document.getElementById('transfer-items-list').appendChild(clone);
+  const rowHtml = `
+    <div class="transfer-row" style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:8px">
+      <select name="product_id[]" class="form-input search-select" required>
+        <option value="">Select product</option>
+        ${transferProductOptions}
+      </select>
+      <input type="number" name="quantity[]" class="form-input" min="1" required placeholder="Qty">
+      <button type="button" class="btn btn-sm btn-danger" onclick="removeTransferRow(this)">✕</button>
+    </div>
+  `;
+  document.getElementById('transfer-items-list').insertAdjacentHTML('beforeend', rowHtml);
+  const newRow = document.getElementById('transfer-items-list').lastElementChild;
+  if(typeof initTomSelect === 'function') initTomSelect(newRow);
 }
 
 function removeTransferRow(btn) {

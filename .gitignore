@@ -49,3 +49,4 @@ venv.bak/
 backups/
 media/
 staticfiles/
+.codex

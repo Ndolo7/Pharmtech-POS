@@ -9,6 +9,12 @@ function posTerminal() {
     processing: false,
     shift_active: false,
     showCloseShift: false,
+    showSessionSalesModal: false,
+    uiError: "",
+    saleSuccessVisible: false,
+    saleSuccessMessage: "",
+    saleSuccessTimer: null,
+    lastSaleHandledAt: 0,
 
     init() {
       window.__posTerminal = this;
@@ -40,6 +46,15 @@ function posTerminal() {
         this.consumeCartResetSignal();
       });
 
+      if (window.__posSaleProcessedHandler) {
+        document.body.removeEventListener("sale-processed", window.__posSaleProcessedHandler);
+      }
+      this._saleProcessedHandler = (event) => {
+        this.handleSaleProcessed(event?.detail || {});
+      };
+      document.body.addEventListener("sale-processed", this._saleProcessedHandler);
+      window.__posSaleProcessedHandler = this._saleProcessedHandler;
+
       this.consumeCartResetSignal();
     },
 
@@ -48,6 +63,8 @@ function posTerminal() {
       this.shift_active = panel ? panel.dataset.shiftActive === "1" : false;
       if (!this.shift_active) {
         this.showCloseShift = false;
+        this.showSessionSalesModal = false;
+        this.clearUiError();
       }
     },
 
@@ -62,17 +79,19 @@ function posTerminal() {
 
     addItem(product) {
       if (product.stock <= 0) {
-        alert("Product out of stock");
+        this.setUiError(`Product ${product.name} is out of stock.`);
         return;
       }
 
       const existing = this.cart.find((item) => item.id === product.id);
       if (existing) {
         if (existing.quantity >= product.stock) {
-          alert("Insufficient stock");
+          this.raiseStockException(existing, existing.quantity + 1);
           return;
         }
         existing.quantity += 1;
+        existing.qtyInput = String(existing.quantity);
+        this.clearUiError();
         return;
       }
 
@@ -81,8 +100,56 @@ function posTerminal() {
         name: product.name,
         price: product.price,
         quantity: 1,
+        qtyInput: "1",
         stock: product.stock,
       });
+      this.clearUiError();
+    },
+
+    setUiError(message) {
+      this.uiError = message;
+    },
+
+    clearUiError() {
+      this.uiError = "";
+    },
+
+    parseQtyInput(value) {
+      if (value === null || value === undefined || value === "") return null;
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed)) return null;
+      return parsed;
+    },
+
+    isQtyInputInvalid(item) {
+      const qty = this.parseQtyInput(item.qtyInput);
+      return qty === null || qty <= 0 || qty > item.stock;
+    },
+
+    isCartStockAvailable() {
+      return this.cart.every((item) => !this.isQtyInputInvalid(item));
+    },
+
+    raiseStockException(item, attemptedQty) {
+      this.setUiError(
+        `Requested quantity (${attemptedQty}) for ${item.name} exceeds available stock (${item.stock}).`,
+      );
+    },
+
+    commitManualQty(id) {
+      const item = this.cart.find((entry) => entry.id === id);
+      if (!item) return;
+
+      const parsedQty = this.parseQtyInput(item.qtyInput);
+      if (parsedQty === null || parsedQty <= 0) return;
+      if (parsedQty > item.stock) {
+        this.raiseStockException(item, parsedQty);
+        return;
+      }
+
+      item.quantity = parsedQty;
+      item.qtyInput = String(parsedQty);
+      this.clearUiError();
     },
 
     updateQty(id, newQty) {
@@ -95,35 +162,88 @@ function posTerminal() {
       if (!item) return;
 
       if (newQty > item.stock) {
-        alert("Insufficient stock");
+        this.raiseStockException(item, newQty);
         return;
       }
 
       item.quantity = newQty;
+      item.qtyInput = String(newQty);
+      this.clearUiError();
     },
 
     removeItem(id) {
       this.cart = this.cart.filter((item) => item.id !== id);
+      if (this.isCartStockAvailable()) this.clearUiError();
     },
 
     getTotal() {
       return this.cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
     },
 
-    submitSale() {
+    submitSale(event) {
+      if (this.processing) {
+        event.preventDefault();
+        return;
+      }
       if (!this.shift_active) {
+        event.preventDefault();
         alert("Start a shift before processing sales.");
         return;
       }
-      if (this.cart.length === 0) return;
+      if (this.cart.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      if (!this.isCartStockAvailable()) {
+        event.preventDefault();
+        this.setUiError("Please correct cart quantities to match available stock before submitting.");
+        return;
+      }
+      this.clearUiError();
       this.processing = true;
-      htmx.trigger(document.getElementById("sale-form"), "submit");
+    },
+
+    openSessionSalesModal() {
+      this.showSessionSalesModal = true;
+      const content = document.getElementById("session-sales-modal-content");
+      if (!content) return;
+      content.innerHTML = '<div class="text-sm text-muted">Loading session sales...</div>';
     },
 
     onSaleComplete(event) {
       this.processing = false;
       if (!event.detail.successful) return;
+      const xhr = event?.detail?.xhr;
+      const responseText = event?.detail?.xhr?.responseText || "";
+      const triggerHeader = xhr?.getResponseHeader("HX-Trigger") || "";
+      const saleCompleted = responseText.includes("data-reset-cart") || triggerHeader.includes("sale-processed");
+      if (!saleCompleted) return;
+
+      this.handleSaleProcessed({});
+    },
+
+    handleSaleProcessed(detail) {
+      const now = Date.now();
+      if (now - this.lastSaleHandledAt < 1000) return;
+      this.lastSaleHandledAt = now;
+
       this.consumeCartResetSignal();
+      this.showSaleSuccess(detail?.message || "Sale processed successfully.");
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 4300);
+    },
+
+    showSaleSuccess(message) {
+      if (this.saleSuccessTimer) {
+        window.clearTimeout(this.saleSuccessTimer);
+      }
+
+      this.saleSuccessMessage = message || "Sale processed successfully.";
+      this.saleSuccessVisible = true;
+      this.saleSuccessTimer = window.setTimeout(() => {
+        this.saleSuccessVisible = false;
+      }, 4000);
     },
 
     resetCart() {
@@ -133,6 +253,7 @@ function posTerminal() {
       this.cashAmount = "";
       this.mpesaAmount = "";
       this.paymentMethod = "cash";
+      this.clearUiError();
     },
   };
 }

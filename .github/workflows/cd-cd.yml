@@ -113,6 +113,9 @@ jobs:
           AUTO_ORDER_LINK_EXPIRY_SECONDS: ${{ secrets.AUTO_ORDER_LINK_EXPIRY_SECONDS }}
           AUTO_ORDER_CHECK_INTERVAL_MINUTES: ${{ secrets.AUTO_ORDER_CHECK_INTERVAL_MINUTES }}
           AUTO_ORDER_EMAIL_FROM: ${{ secrets.AUTO_ORDER_EMAIL_FROM }}
+          SMS_LEOPARD_API_KEY: ${{ secrets.SMS_LEOPARD_API_KEY }}
+          SMS_LEOPARD_API_SECRET: ${{ secrets.SMS_LEOPARD_API_SECRET }}
+          SMS_LEOPARD_SOURCE: ${{ secrets.SMS_LEOPARD_SOURCE }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -142,6 +145,9 @@ jobs:
             echo "AUTO_ORDER_LINK_EXPIRY_SECONDS=$AUTO_ORDER_LINK_EXPIRY_SECONDS" >> .env
             echo "AUTO_ORDER_CHECK_INTERVAL_MINUTES=$AUTO_ORDER_CHECK_INTERVAL_MINUTES" >> .env
             echo "AUTO_ORDER_EMAIL_FROM=$AUTO_ORDER_EMAIL_FROM" >> .env
+            echo "SMS_LEOPARD_API_KEY=$SMS_LEOPARD_API_KEY" >> .env
+            echo "SMS_LEOPARD_API_SECRET=$SMS_LEOPARD_API_SECRET" >> .env
+            echo "SMS_LEOPARD_SOURCE=$SMS_LEOPARD_SOURCE" >> .env
 
             # Authenticate with GHCR using a read-only PAT
             echo "${{ secrets.GHP_TOKEN }}" | \

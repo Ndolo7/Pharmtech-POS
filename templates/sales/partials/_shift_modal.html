@@ -28,7 +28,7 @@
   </div>
   {% elif close_form %}
   <div class="modal-backdrop" x-show="showCloseShift" style="display:none" @click.self="showCloseShift=false">
-    <div class="modal">
+    <div class="modal" x-data="{ expenses: [{ amount: '', description: '' }], addExpense(){ this.expenses.push({ amount: '', description: '' }); }, removeExpense(idx){ this.expenses.splice(idx, 1); if(this.expenses.length===0){ this.expenses.push({ amount: '', description: '' }); } } }">
       <div class="modal-header">
         <h3>Close Shift</h3>
       </div>
@@ -37,7 +37,7 @@
           hx-post="{% url 'close-shift' %}"
           hx-target="#current-shift-panel"
           hx-swap="outerHTML"
-          hx-on::after-request="if(event.detail.successful){showCloseShift=false;}">
+          hx-on::after-request="if(event.detail.successful && document.getElementById('current-shift-panel')?.dataset.shiftActive === '0'){showCloseShift=false;}">
           {% csrf_token %}
           <div class="form-group">
             <label>Closing Cash (KES)</label>
@@ -50,6 +50,20 @@
           <div class="form-group">
             <label>Notes</label>
             {{ close_form.notes }}
+          </div>
+          <div class="form-group">
+            <div class="flex justify-between items-center" style="margin-bottom:8px">
+              <label style="margin:0">Expenses</label>
+              <button type="button" class="btn btn-secondary btn-sm" @click="addExpense()">Add Expense</button>
+            </div>
+            <div class="text-muted text-sm" style="margin-bottom:8px">Add any cash expenses deducted during this shift.</div>
+            <template x-for="(expense, idx) in expenses" :key="idx">
+              <div class="form-row" style="margin-bottom:8px;grid-template-columns:1fr 2fr auto">
+                <input type="number" step="0.01" min="0.01" name="expense_amount[]" class="form-input" placeholder="Amount" x-model="expense.amount">
+                <input type="text" name="expense_description[]" class="form-input" placeholder="Description" x-model="expense.description">
+                <button type="button" class="btn btn-secondary btn-sm" @click="removeExpense(idx)">Remove</button>
+              </div>
+            </template>
           </div>
           <div class="flex gap-2">
             <button type="button" class="btn btn-secondary" @click="showCloseShift=false">Cancel</button>

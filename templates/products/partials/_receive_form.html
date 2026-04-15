@@ -13,7 +13,11 @@
         {% if all_branches %}
         <div class="form-group" style="margin-bottom:12px;">
           <label>Receiving Branch *</label>
-          <select name="branch_id" class="form-input" required>
+          <select name="branch_id" class="form-input" required
+            hx-get="{% url 'supplier-pending-orders' %}"
+            hx-target="#receive-items"
+            hx-swap="innerHTML"
+            hx-include="[name='supplier_id']">
             <option value="">Select branch</option>
             {% for b in all_branches %}
               <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
@@ -31,7 +35,11 @@
         <div class="form-row">
           <div class="form-group">
             <label>Supplier *</label>
-            <select name="supplier_id" class="form-input" required>
+            <select name="supplier_id" class="form-input search-select" required
+              hx-get="{% url 'supplier-pending-orders' %}" 
+              hx-target="#receive-items"
+              hx-swap="innerHTML"
+              hx-include="[name='branch_id']">
               <option value="">Select supplier</option>
               {% for s in suppliers %}
               <option value="{{ s.id }}">{{ s.name }}</option>
@@ -45,28 +53,14 @@
         </div>
 
         <div id="receive-items">
-          <div class="flex justify-between items-center mb-2">
-            <label class="font-medium">Items</label>
-            <button type="button" class="btn btn-sm btn-outline" onclick="addReceiveRow()">+ Add Item</button>
-          </div>
-          <div id="items-list">
-            <div class="receive-row" style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;margin-bottom:8px">
-              <select name="product_id[]" class="form-input" required>
-                <option value="">Select product</option>
-                {% for p in products %}
-                <option value="{{ p.id }}">{{ p.name }}</option>
-                {% endfor %}
-              </select>
-              <input type="number" name="quantity[]" placeholder="Qty" class="form-input" required min="1">
-              <input type="number" name="unit_cost[]" placeholder="Cost" class="form-input" required step="0.01" min="0">
-              <button type="button" class="btn btn-sm btn-danger" onclick="removeReceiveRow(this)" disabled>✕</button>
-            </div>
+          <div class="message message-info" style="margin-bottom:12px;max-width:none">
+            Please select a supplier above to see the expected orders.
           </div>
         </div>
 
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-success">Receive Stock</button>
+          <button type="submit" id="receive-stock-submit" class="btn btn-success">Receive Stock</button>
         </div>
       </form>
     </div>
@@ -74,18 +68,96 @@
 </div>
 
 <script>
-const productOptions = `{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}`;
+(function() {
+  function toNumber(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
 
-function addReceiveRow() {
-  const clone = document.querySelector('.receive-row').cloneNode(true);
-  clone.querySelectorAll('input').forEach(i => i.value = '');
-  clone.querySelector('select').innerHTML = '<option value="">Select product</option>' + productOptions;
-  clone.querySelector('button').disabled = false;
-  document.getElementById('items-list').appendChild(clone);
-}
+  function validateReceivePricing() {
+    const rows = document.querySelectorAll("#receive-items .receive-row");
+    const submitButton = document.getElementById("receive-stock-submit");
+    if (!submitButton) return;
 
-function removeReceiveRow(btn) {
-  const rows = document.querySelectorAll('.receive-row');
-  if (rows.length > 1) btn.closest('.receive-row').remove();
-}
+    const hasRows = rows.length > 0;
+    let allValid = hasRows;
+    rows.forEach((row) => {
+      const qtyInput = row.querySelector('input[name="quantity[]"]');
+      const costInput = row.querySelector('input[name="cost_price[]"]');
+      const sellingInput = row.querySelector('input[name="selling_price[]"]');
+      const warning = row.querySelector(".receive-margin-warning");
+      if (!qtyInput || !costInput || !sellingInput || !warning) return;
+      const packQty = toNumber(row.getAttribute("data-pack-qty")) || 1;
+
+      const qty = toNumber(qtyInput.value);
+      const costPerPacket = toNumber(costInput.value);
+      const selling = toNumber(sellingInput.value);
+      const shouldValidate = Number.isFinite(qty) && qty > 0;
+
+      let isValid = true;
+      let warningText = "";
+
+      if (shouldValidate) {
+        const costPerUnit = costPerPacket / packQty;
+        const minSelling = costPerUnit * 1.33;
+        if (!Number.isFinite(costPerPacket) || costPerPacket <= 0) {
+          isValid = false;
+          warningText = "Cost per packet must be greater than 0.";
+        } else if (!Number.isFinite(packQty) || packQty <= 0) {
+          isValid = false;
+          warningText = "Invalid pack quantity for selected product.";
+        } else if (!Number.isFinite(selling) || selling < minSelling) {
+          const roundedMinSelling = Math.round(minSelling).toFixed(2);
+          const roundedCostPerUnit = Math.round(costPerUnit).toFixed(2);
+          isValid = false;
+          warningText = `Selling price per unit must be at least ${roundedMinSelling} (cost/unit = ${roundedCostPerUnit}).`;
+        }
+
+        if (Number.isFinite(costPerPacket) && costPerPacket > 0 && Number.isFinite(packQty) && packQty > 0) {
+          const computedMin = ((costPerPacket / packQty) * 1.33).toFixed(2);
+          sellingInput.setAttribute("min", computedMin);
+        } else {
+          sellingInput.setAttribute("min", "0.01");
+        }
+      }
+
+      if (!isValid) {
+        allValid = false;
+        sellingInput.style.borderColor = "var(--danger)";
+        warning.textContent = warningText;
+        warning.style.display = "block";
+      } else {
+        sellingInput.style.borderColor = "";
+        warning.textContent = "";
+        warning.style.display = "none";
+      }
+    });
+
+    submitButton.disabled = hasRows ? !allValid : true;
+  }
+
+  window.validateReceivePricing = validateReceivePricing;
+
+  if (!window.__receivePricingListenersBound) {
+    document.addEventListener("input", function(event) {
+      if (
+        event.target.matches('#receive-items input[name="quantity[]"]') ||
+        event.target.matches('#receive-items input[name="cost_price[]"]') ||
+        event.target.matches('#receive-items input[name="selling_price[]"]')
+      ) {
+        validateReceivePricing();
+      }
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function(event) {
+      if (event.target && event.target.id === "receive-items") {
+        validateReceivePricing();
+      }
+    });
+
+    window.__receivePricingListenersBound = true;
+  }
+
+  setTimeout(validateReceivePricing, 0);
+})();
 </script>

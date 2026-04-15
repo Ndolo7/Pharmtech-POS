@@ -91,6 +91,17 @@ body {
   padding: 20px 18px;
   border-bottom: 1px solid rgba(255,255,255,.1);
 }
+.sidebar-brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-brand-mark {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  margin-bottom: 4px;
+}
 .sidebar-logo h1 { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: -.3px; }
 .sidebar-logo p  { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
 
@@ -163,6 +174,16 @@ body {
   box-shadow: var(--shadow);
 }
 .topbar-title { font-size: 16px; font-weight: 600; color: var(--gray-800); }
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-brand-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
 
 .mobile-overlay { display: none; }
 .mobile-overlay.open {
@@ -364,6 +385,11 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .toggle-password:hover { color: var(--gray-700); }
 
+/* Keep Tom Select dropdown above report cards/modals */
+.ts-dropdown {
+  z-index: 1200 !important;
+}
+
 /* ── Modal ──────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0;
@@ -381,6 +407,7 @@ tbody tr:last-child td { border-bottom: none; }
   max-height: 90vh;
   overflow-y: auto;
 }
+.modal-wide { max-width: 880px; }
 .modal-header {
   padding: 18px 22px;
   border-bottom: 1px solid var(--gray-100);
@@ -485,6 +512,18 @@ tbody tr:last-child td { border-bottom: none; }
 .qty-control { display: flex; align-items: center; gap: 8px; }
 .qty-btn { width: 24px; height: 24px; border: 1px solid var(--gray-300); border-radius: 4px; background: #fff; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
 .qty-btn:hover { background: var(--gray-100); }
+.qty-input {
+  width: 62px;
+  padding: 3px 6px;
+  border: 1px solid var(--gray-300);
+  border-radius: 4px;
+  text-align: center;
+  font-weight: 600;
+}
+.qty-input.invalid {
+  border-color: var(--danger);
+  background: var(--danger-light);
+}
 .cart-total { padding: 14px 16px; border-top: 1px solid var(--gray-200); background: var(--gray-50); }
 .cart-total .total-row { display: flex; justify-content: space-between; font-weight: 700; font-size: 16px; }
 .payment-section { padding: 14px 16px; border-top: 1px solid var(--gray-200); }
@@ -495,14 +534,95 @@ tbody tr:last-child td { border-bottom: none; }
   text-align: center; color: var(--gray-600); transition: .15s;
 }
 .payment-method-btn.active { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.session-sales-trigger {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.session-sales-trigger:hover { text-decoration: underline; }
+.session-sales-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.session-sales-tab {
+  border: 1px solid var(--gray-300);
+  background: #fff;
+  color: var(--gray-700);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.session-sales-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
+.session-sales-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.session-sales-summary-table th,
+.session-sales-summary-table td {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.session-sales-summary-table th {
+  background: #fff;
+  color: var(--gray-600);
+}
+.session-sales-sale-card {
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.session-sales-sale-card + .session-sales-sale-card { margin-top: 12px; }
+.session-sales-sale-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-100);
+}
+.session-sales-items th,
+.session-sales-items td {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.session-sales-items th {
+  background: #fff;
+  color: var(--gray-600);
+}
 
 /* ── Login Page ─────────────────────────── */
 .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); }
 .login-card { background: #fff; border-radius: 12px; box-shadow: var(--shadow-lg); padding: 40px; width: 100%; max-width: 380px; }
 .login-card h1 { font-size: 22px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }
 .login-card p  { color: var(--gray-400); font-size: 13px; margin-bottom: 28px; }
-.login-logo { width: 48px; height: 48px; background: var(--primary); border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
-.login-logo svg { width: 28px; height: 28px; stroke: #fff; fill: none; }
+.login-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.login-logo img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
 
 /* ── Empty state ─────────────────────────── */
 .empty-state { text-align: center; padding: 60px 20px; color: var(--gray-400); }
@@ -519,4 +639,5 @@ tbody tr:last-child td { border-bottom: none; }
   .dashboard-actions-grid { grid-template-columns: 1fr; }
   .dashboard-shift-grid { grid-template-columns: 1fr; gap: 12px; }
   .dashboard-home .dashboard-stat-card .value { font-size: 22px; }
+  .session-sales-summary { grid-template-columns: 1fr; }
 }

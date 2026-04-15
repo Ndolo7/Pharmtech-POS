@@ -1,10 +1,12 @@
-from decimal import Decimal
+import json
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from django.apps import apps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -37,6 +39,122 @@ from .models import (
 from .tasks import notify_next_supplier
 
 
+def _to_non_negative_int(value):
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _branch_pending_packets(supplier_request, branch):
+    if not branch:
+        return supplier_request.pending_quantity
+
+    branch_requirements = supplier_request.reorder_request.branch_requirements or {}
+    if not isinstance(branch_requirements, dict) or not branch_requirements:
+        return supplier_request.pending_quantity
+
+    return _to_non_negative_int(branch_requirements.get(branch.name, 0))
+
+
+def _normalized_branch_requirements(branch_requirements):
+    if not isinstance(branch_requirements, dict):
+        return []
+
+    payload = []
+    for branch_name, qty in branch_requirements.items():
+        normalized_qty = _to_non_negative_int(qty)
+        if normalized_qty > 0:
+            payload.append((str(branch_name), normalized_qty))
+
+    payload.sort(key=lambda item: item[0].lower())
+    return payload
+
+
+@login_required
+@require_GET
+def supplier_pending_orders_view(request):
+    supplier_id = request.GET.get("supplier_id")
+    if not supplier_id:
+        return HttpResponse("")
+
+    supplier = get_object_or_404(Supplier, pk=supplier_id)
+    active_branch = _resolve_products_branch(request)
+    pending_requests = []
+
+    orders = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status__in=[SupplierReorderRequest.STATUS_ACCEPTED, SupplierReorderRequest.STATUS_PARTIAL]
+    ).select_related("reorder_request", "reorder_request__product")
+
+    for order in orders:
+        if order.pending_quantity > 0:
+            branch_pending_quantity = _branch_pending_packets(order, active_branch)
+            if branch_pending_quantity <= 0:
+                continue
+            order.branch_pending_quantity = min(order.pending_quantity, branch_pending_quantity)
+            pending_requests.append(order)
+
+    return render(
+        request,
+        "products/partials/_pending_order_rows.html",
+        {"pending_requests": pending_requests},
+    )
+
+@login_required
+def manual_order_create_view(request):
+    if not _can_manage_catalog(request.user):
+        return HttpResponseForbidden("Permission denied.")
+
+    Branch = apps.get_model("branches", "Branch")
+    can_select_branch = request.user.can_manage_users()
+    all_branches = Branch.objects.filter(is_active=True) if can_select_branch else None
+    
+    active_branch_id = request.GET.get("branch") or request.POST.get("branch_id")
+    if not can_select_branch:
+        active_branch = request.user.branch
+        active_branch_id = active_branch.id if active_branch else None
+    else:
+        active_branch = Branch.objects.filter(pk=active_branch_id).first() if active_branch_id else None
+
+    if request.method == "POST":
+        product_id = request.POST.get("product_id")
+        packets = int(request.POST.get("packets", 0))
+        if not product_id or packets <= 0 or not active_branch:
+            return HttpResponseBadRequest("Invalid inputs.")
+
+        product = get_object_or_404(Product, pk=product_id)
+
+        with transaction.atomic():
+            reorder = AutoReorderRequest.objects.create(
+                product=product,
+                target_stock_level=product.max_stock,
+                current_stock_snapshot=product.current_stock(),
+                requested_quantity=packets,
+                remaining_quantity=packets,
+                branch_requirements={active_branch.name: packets},
+                status=AutoReorderRequest.STATUS_OPEN,
+            )
+        
+        notify_next_supplier.delay(reorder.id)
+        if request.htmx:
+            return _with_hx_trigger(
+                HttpResponse(""),
+                "stock-action-success",
+                {"message": f"Manual order for {packets} packet(s) of {product.name} created successfully."},
+            )
+        messages.success(request, f"Manual order for {packets} packet(s) of {product.name} created successfully.")
+        return HttpResponse("")
+
+    products = Product.objects.filter(is_active=True).order_by("name")
+    return render(request, "products/partials/_create_order_form.html", {
+        "products": products,
+        "all_branches": all_branches,
+        "active_branch": active_branch,
+        "active_branch_id": int(active_branch_id) if active_branch_id else None,
+    })
+
+
 def _can_manage_catalog(user):
     return user.is_superuser or user.is_staff or user.can_manage_users()
 
@@ -46,7 +164,13 @@ def _can_select_products_branch(user):
 
 
 def _resolve_products_branch(request):
-    selected_branch_id = (request.GET.get("branch") or request.POST.get("branch_id") or "").strip()
+    selected_branch_id = (
+        request.GET.get("branch")
+        or request.GET.get("branch_id")
+        or request.POST.get("branch_id")
+        or request.POST.get("branch")
+        or ""
+    ).strip()
     can_select_branch = _can_select_products_branch(request.user)
     active_branches = Branch.objects.filter(is_active=True).order_by("name")
 
@@ -131,6 +255,25 @@ def _rows_oob_response(request, products, branch=None):
     return HttpResponse(payload)
 
 
+def _with_hx_trigger(response, event_name, detail):
+    if not response:
+        return response
+
+    triggers = {}
+    existing = response.headers.get("HX-Trigger")
+    if existing:
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, dict):
+                triggers.update(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    triggers[event_name] = detail
+    response["HX-Trigger"] = json.dumps(triggers)
+    return response
+
+
 @login_required
 def product_list_view(request):
     search = request.GET.get("q", "").strip()
@@ -206,13 +349,14 @@ def receive_stock_view(request):
     if request.user.get_role_display() == "Cashier":
         messages.error(request, "Permission denied.")
         return redirect("/")
-        
+
+    can_select_branch = _can_select_products_branch(request.user)
     active_branch = _resolve_products_branch(request)
 
     if request.method == "POST":
-        if request.POST.get("branch_id"):
+        if request.POST.get("branch_id") and can_select_branch:
             active_branch = get_object_or_404(Branch, pk=request.POST["branch_id"])
-        
+
         changed_products = []
 
         if not active_branch:
@@ -223,28 +367,73 @@ def receive_stock_view(request):
             with transaction.atomic():
                 supplier = get_object_or_404(Supplier, pk=request.POST.get("supplier_id"))
                 invoice_number = request.POST.get("invoice_number", "").strip()
-                product_ids = request.POST.getlist("product_id[]")
+                request_ids = request.POST.getlist("reorder_request_id[]")
                 quantities = request.POST.getlist("quantity[]")
-                unit_costs = request.POST.getlist("unit_cost[]")
+                cost_prices = request.POST.getlist("cost_price[]")
+                selling_prices = request.POST.getlist("selling_price[]")
 
                 if not invoice_number:
                     raise ValueError("Invoice number is required.")
-                if not product_ids:
-                    raise ValueError("Add at least one product line.")
-                if len(product_ids) != len(quantities) or len(product_ids) != len(unit_costs):
+                if not request_ids:
+                    raise ValueError("No pending items found or selected to receive.")
+                if len(request_ids) != len(quantities):
                     raise ValueError("Incomplete stock lines were submitted.")
+                if len(request_ids) != len(cost_prices) or len(request_ids) != len(selling_prices):
+                    raise ValueError("Incomplete pricing lines were submitted.")
 
-                total_amount = 0
+                total_amount = Decimal("0.00")
                 cleaned_lines = []
-                for pid, qty, cost in zip(product_ids, quantities, unit_costs):
-                    qty_int = int(qty)
-                    cost_float = float(cost)
-                    if qty_int <= 0:
-                        raise ValueError("Quantity must be greater than zero.")
-                    if cost_float < 0:
-                        raise ValueError("Unit cost cannot be negative.")
-                    total_amount += qty_int * cost_float
-                    cleaned_lines.append((pid, qty_int, cost_float))
+                for req_id, qty, cost_raw, selling_raw in zip(request_ids, quantities, cost_prices, selling_prices):
+                    try:
+                        qty_int = int(qty)
+                    except (TypeError, ValueError):
+                        raise ValueError("Quantity must be a valid whole number.")
+                    if qty_int < 0:
+                        raise ValueError("Quantity cannot be negative.")
+                    if qty_int == 0:
+                        continue
+
+                    sup_req = SupplierReorderRequest.objects.select_for_update().get(pk=req_id)
+                    product = sup_req.reorder_request.product
+
+                    try:
+                        cost_dec = Decimal(str(cost_raw).strip())
+                    except (TypeError, ValueError, InvalidOperation):
+                        raise ValueError(f"Invalid cost price for {product.name}.")
+
+                    try:
+                        selling_dec = Decimal(str(selling_raw).strip())
+                    except (TypeError, ValueError, InvalidOperation):
+                        raise ValueError(f"Invalid selling price for {product.name}.")
+
+                    if cost_dec <= 0:
+                        raise ValueError(f"Cost price must be greater than 0 for {product.name}.")
+
+                    pack_quantity = max(int(product.pack_quantity or 1), 1)
+                    cost_per_unit = cost_dec / Decimal(pack_quantity)
+                    min_selling_price = cost_per_unit * Decimal("1.33")
+                    if selling_dec < min_selling_price:
+                        raise ValueError(
+                            f"Selling price for {product.name} must be at least {min_selling_price.quantize(Decimal('0.01'))} (33% above unit cost)."
+                        )
+
+                    branch_pending_packets = _branch_pending_packets(sup_req, active_branch)
+                    max_allowed_packets = min(sup_req.pending_quantity, branch_pending_packets)
+                    if max_allowed_packets <= 0:
+                        raise ValueError(
+                            f"{sup_req.reorder_request.product.name} is not pending for {active_branch.name}."
+                        )
+                    if qty_int > max_allowed_packets:
+                        raise ValueError(
+                            f"Cannot receive more than {max_allowed_packets} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
+                        )
+
+                    actual_units_received = qty_int * product.pack_quantity
+                    total_amount += qty_int * cost_dec
+                    cleaned_lines.append((sup_req, product, qty_int, actual_units_received, cost_dec, cost_per_unit, selling_dec))
+
+                if not cleaned_lines:
+                    raise ValueError("List must contain at least one positive quantity item.")
 
                 purchase = Purchase.objects.create(
                     supplier=supplier,
@@ -254,15 +443,34 @@ def receive_stock_view(request):
                     created_by=request.user,
                 )
 
-                for pid, qty_int, cost_float in cleaned_lines:
-                    product = get_object_or_404(Product, pk=pid)
+                for sup_req, product, qty_int, actual_units_received, cost_per_packet_dec, cost_per_unit_dec, selling_dec in cleaned_lines:
                     changed_products.append(product)
+
+                    sup_req.received_quantity += qty_int
+                    sup_req.save(update_fields=["received_quantity", "updated_at"])
+
+                    reorder_request = sup_req.reorder_request
+                    branch_requirements = reorder_request.branch_requirements or {}
+                    if (
+                        active_branch
+                        and isinstance(branch_requirements, dict)
+                        and active_branch.name in branch_requirements
+                    ):
+                        remaining_branch_packets = _to_non_negative_int(branch_requirements.get(active_branch.name)) - qty_int
+                        branch_requirements[active_branch.name] = max(remaining_branch_packets, 0)
+                        reorder_request.branch_requirements = branch_requirements
+                        reorder_request.save(update_fields=["branch_requirements", "updated_at"])
+
+                    if product.cost_price != cost_per_packet_dec or product.unit_price != selling_dec:
+                        product.cost_price = cost_per_packet_dec
+                        product.unit_price = selling_dec
+                        product.save(update_fields=["cost_price", "unit_price", "updated_at"])
 
                     PurchaseItem.objects.create(
                         purchase=purchase,
                         product=product,
-                        quantity=qty_int,
-                        unit_cost=cost_float,
+                        quantity=actual_units_received,
+                        unit_cost=cost_per_unit_dec,
                     )
 
                     stock, _ = Stock.objects.get_or_create(
@@ -270,20 +478,27 @@ def receive_stock_view(request):
                         branch=active_branch,
                         defaults={"quantity": 0},
                     )
-                    stock.quantity += qty_int
+                    stock.quantity += actual_units_received
                     stock.save(update_fields=["quantity", "updated_at"])
 
                     StockMovement.objects.create(
                         product=product,
                         branch=active_branch,
                         movement_type="purchase",
-                        quantity=qty_int,
+                        quantity=actual_units_received,
                         reference=invoice_number,
                         created_by=request.user,
                     )
 
+            if request.htmx:
+                response = _rows_oob_response(request, changed_products, branch=active_branch)
+                return _with_hx_trigger(
+                    response,
+                    "stock-action-success",
+                    {"message": "Stock received successfully."},
+                )
             messages.success(request, "Stock received successfully.")
-            return _rows_oob_response(request, changed_products, branch=active_branch) if request.htmx else _redirect_with_branch("stock-list", active_branch)
+            return _redirect_with_branch("stock-list", active_branch)
 
         except Exception as exc:
             messages.error(request, f"Error: {exc}")
@@ -291,7 +506,7 @@ def receive_stock_view(request):
 
     suppliers = Supplier.objects.all()
     products = Product.objects.filter(is_active=True)
-    all_branches = Branch.objects.filter(is_active=True).order_by("name")
+    all_branches = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else None
     template_name = "products/partials/_receive_form.html" if request.htmx else "products/receive_stock.html"
     return render(
         request,
@@ -390,18 +605,37 @@ def transfer_stock_view(request):
             return render(request, template_name, {"blocked": True})
         return _rows_oob_response(request, [], branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
 
-    active_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
+    destination_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
 
     if request.method == "POST":
         if request.POST.get("from_branch_id"):
             from_branch = get_object_or_404(Branch, pk=request.POST["from_branch_id"])
-            
+
+        destination_branches = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk).order_by("name")
         form = TransferStockForm(request.POST)
-        form.fields["to_branch"].queryset = Branch.objects.filter(is_active=True).exclude(pk=from_branch.pk if from_branch else None).order_by("name")
+        form.fields["to_branch"].queryset = Branch.objects.filter(is_active=True).order_by("name")
         changed_products = []
 
         if form.is_valid():
             to_branch = form.cleaned_data["to_branch"]
+            if from_branch and to_branch and from_branch.pk == to_branch.pk:
+                form.add_error("to_branch", "Destination branch must be different from source branch.")
+                all_branches = Branch.objects.filter(is_active=True).order_by("name")
+                products = Product.objects.filter(is_active=True).order_by("name")
+                return render(
+                    request,
+                    template_name,
+                    {
+                        "form": form,
+                        "products": products,
+                        "all_branches": all_branches,
+                        "branches": destination_branches,
+                        "destination_branches": destination_branches,
+                        "selected_to_branch_id": request.POST.get("to_branch", ""),
+                        "active_branch": from_branch,
+                        "active_branch_id": from_branch.pk if from_branch else "",
+                    },
+                )
             notes = form.cleaned_data.get("notes", "")
             product_ids = request.POST.getlist("product_id[]")
             quantities = request.POST.getlist("quantity[]")
@@ -473,8 +707,15 @@ def transfer_stock_view(request):
 
                         changed_products.append(product)
 
+                if request.htmx:
+                    response = _rows_oob_response(request, changed_products, branch=from_branch)
+                    return _with_hx_trigger(
+                        response,
+                        "stock-action-success",
+                        {"message": f"Transfer to {to_branch.name} completed."},
+                    )
                 messages.success(request, f"Transfer to {to_branch.name} completed.")
-                return _rows_oob_response(request, changed_products, branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
+                return _redirect_with_branch("stock-list", from_branch)
             except Exception as exc:
                 messages.error(request, f"Error: {exc}")
                 return _rows_oob_response(request, changed_products, branch=from_branch) if request.htmx else _redirect_with_branch("stock-list", from_branch)
@@ -488,14 +729,16 @@ def transfer_stock_view(request):
                 "form": form,
                 "products": products,
                 "all_branches": all_branches,
-                "branches": active_branches,
+                "branches": destination_branches,
+                "destination_branches": destination_branches,
+                "selected_to_branch_id": request.POST.get("to_branch", ""),
                 "active_branch": from_branch,
                 "active_branch_id": from_branch.pk if from_branch else "",
             },
         )
 
     form = TransferStockForm()
-    form.fields["to_branch"].queryset = active_branches
+    form.fields["to_branch"].queryset = destination_branches
     all_branches = Branch.objects.filter(is_active=True).order_by("name")
     products = Product.objects.filter(is_active=True).order_by("name")
     return render(
@@ -505,9 +748,36 @@ def transfer_stock_view(request):
             "form": form,
             "products": products,
             "all_branches": all_branches,
-            "branches": active_branches,
+            "branches": destination_branches,
+            "destination_branches": destination_branches,
+            "selected_to_branch_id": "",
             "active_branch": from_branch,
             "active_branch_id": from_branch.pk if from_branch else "",
+        },
+    )
+
+
+@login_required
+@require_GET
+def transfer_destination_branches_view(request):
+    from_branch_id = (request.GET.get("from_branch_id") or "").strip()
+    selected_to_branch_id = (
+        request.GET.get("selected_to_branch_id")
+        or request.GET.get("to_branch")
+        or ""
+    ).strip()
+
+    destination_branches = Branch.objects.filter(is_active=True).order_by("name")
+    if from_branch_id:
+        destination_branches = destination_branches.exclude(pk=from_branch_id)
+
+    return render(
+        request,
+        "products/partials/_transfer_destination_field.html",
+        {
+            "destination_branches": destination_branches,
+            "selected_to_branch_id": selected_to_branch_id,
+            "to_branch_errors": "",
         },
     )
 
@@ -759,126 +1029,125 @@ def category_edit_view(request, pk):
 
 
 def supplier_reorder_response_view(request, token):
-    supplier_request = get_object_or_404(
-        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product"),
+    primary_request = get_object_or_404(
+        SupplierReorderRequest.objects.select_related("supplier"),
         token=token,
     )
+    supplier = primary_request.supplier
     now = timezone.now()
-    max_stock = max(int(supplier_request.reorder_request.target_stock_level or supplier_request.reorder_request.product.max_stock or 1), 1)
-    max_quantity = min(max_stock, supplier_request.requested_quantity)
 
-    if supplier_request.status == SupplierReorderRequest.STATUS_PENDING and now > supplier_request.expires_at:
+    # Expire any pending expired requests for this supplier
+    pending_expired = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status=SupplierReorderRequest.STATUS_PENDING,
+        expires_at__lt=now
+    ).select_related("reorder_request")
+
+    for locked_request in pending_expired:
         with transaction.atomic():
-            locked_request = SupplierReorderRequest.objects.select_for_update().filter(pk=supplier_request.pk).first()
-            if (
-                locked_request
-                and locked_request.status == SupplierReorderRequest.STATUS_PENDING
-                and timezone.now() > locked_request.expires_at
-            ):
-                locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
-                locked_request.responded_at = timezone.now()
-                locked_request.save(update_fields=["status", "responded_at", "updated_at"])
-
-                reorder = locked_request.reorder_request
+            locked = SupplierReorderRequest.objects.select_for_update().filter(
+                pk=locked_request.pk, status=SupplierReorderRequest.STATUS_PENDING
+            ).first()
+            if locked:
+                locked.status = SupplierReorderRequest.STATUS_EXPIRED
+                locked.responded_at = now
+                locked.save(update_fields=["status", "responded_at", "updated_at"])
+                reorder = locked.reorder_request
                 if reorder.status == AutoReorderRequest.STATUS_OPEN and reorder.remaining_quantity > 0:
                     notify_next_supplier.delay(reorder.id)
 
-        supplier_request.refresh_from_db()
+    pending_requests_qs = SupplierReorderRequest.objects.filter(
+        supplier=supplier,
+        status=SupplierReorderRequest.STATUS_PENDING,
+        expires_at__gte=now
+    ).select_related("reorder_request__product").order_by("created_at")
+    pending_requests = list(pending_requests_qs)
+
+    branch_product_map = {}
+    for pending_request in pending_requests:
+        branch_breakdown = _normalized_branch_requirements(
+            pending_request.reorder_request.branch_requirements or {}
+        )
+        pending_request.branch_breakdown = branch_breakdown
+        for branch_name, qty in branch_breakdown:
+            branch_product_map.setdefault(branch_name, []).append(
+                {
+                    "product_name": pending_request.reorder_request.product.name,
+                    "quantity": qty,
+                }
+            )
+
+    branch_groups = []
+    for branch_name in sorted(branch_product_map.keys(), key=lambda value: value.lower()):
+        branch_items = branch_product_map[branch_name]
+        branch_groups.append(
+            {
+                "name": branch_name,
+                "items": branch_items,
+                "total_packets": sum(item["quantity"] for item in branch_items),
+            }
+        )
 
     if request.method == "POST":
-        form = SupplierReorderResponseForm(request.POST, max_quantity=max_quantity)
-        if form.is_valid():
-            should_escalate = False
+        should_escalate_ids = []
+        feedback_messages = []
+
+        request_ids = request.POST.getlist("request_id")
+        for req_id_str in request_ids:
+            try:
+                req_id = int(req_id_str)
+            except ValueError:
+                continue
+
+            can_supply = request.POST.get(f"can_supply_{req_id}") == "yes"
+            try:
+                quantity = int(request.POST.get(f"quantity_{req_id}") or 0)
+            except ValueError:
+                quantity = 0
 
             with transaction.atomic():
-                locked_request = (
+                locked_req = (
                     SupplierReorderRequest.objects.select_for_update()
-                    .select_related("reorder_request")
-                    .filter(pk=supplier_request.pk)
+                    .select_related("reorder_request__product")
+                    .filter(pk=req_id, supplier=supplier, status=SupplierReorderRequest.STATUS_PENDING)
                     .first()
                 )
-                if not locked_request:
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": supplier_request,
-                            "can_respond": False,
-                            "message_type": "error",
-                            "message": "This supplier request was not found.",
-                        },
-                    )
+                if not locked_req:
+                    continue
 
-                now = timezone.now()
-                if (
-                    locked_request.status != SupplierReorderRequest.STATUS_PENDING
-                    or now > locked_request.expires_at
-                ):
-                    reorder_id = None
-                    if locked_request.status == SupplierReorderRequest.STATUS_PENDING and now > locked_request.expires_at:
-                        locked_request.status = SupplierReorderRequest.STATUS_EXPIRED
-                        locked_request.responded_at = now
-                        locked_request.save(update_fields=["status", "responded_at", "updated_at"])
-                        if (
-                            locked_request.reorder_request.status == AutoReorderRequest.STATUS_OPEN
-                            and locked_request.reorder_request.remaining_quantity > 0
-                        ):
-                            reorder_id = locked_request.reorder_request_id
-                    if reorder_id:
-                        notify_next_supplier.delay(reorder_id)
-                    locked_request.refresh_from_db()
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": locked_request,
-                            "can_respond": False,
-                            "message_type": "error",
-                            "message": "This link is expired or already used.",
-                        },
-                    )
+                if now > locked_req.expires_at:
+                    continue
 
                 reorder = (
                     AutoReorderRequest.objects.select_for_update()
-                    .filter(pk=locked_request.reorder_request_id)
+                    .filter(pk=locked_req.reorder_request_id, status=AutoReorderRequest.STATUS_OPEN)
                     .first()
                 )
-                if not reorder or reorder.status != AutoReorderRequest.STATUS_OPEN:
-                    return render(
-                        request,
-                        "products/supplier_reorder_response.html",
-                        {
-                            "supplier_request": locked_request,
-                            "can_respond": False,
-                            "message_type": "warning",
-                            "message": "This reorder request is no longer active.",
-                        },
-                    )
+                if not reorder:
+                    locked_req.status = SupplierReorderRequest.STATUS_REJECTED
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "responded_at", "updated_at"])
+                    continue
 
-                can_supply = form.cleaned_data["can_supply"] == "yes"
-                quantity = int(form.cleaned_data.get("quantity") or 0)
-                effective_max = min(max_stock, locked_request.requested_quantity, reorder.remaining_quantity)
-                quantity = min(quantity, effective_max)
+                effective_max = min(locked_req.requested_quantity, reorder.remaining_quantity)
+                quantity = min(quantity, effective_max) if can_supply else 0
 
                 if not can_supply or quantity <= 0:
-                    locked_request.status = SupplierReorderRequest.STATUS_REJECTED
-                    locked_request.fulfilled_quantity = 0
-                    locked_request.responded_at = now
-                    locked_request.save(
-                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
-                    )
-                    should_escalate = reorder.remaining_quantity > 0
-                    feedback = "Response received. We will contact the next supplier."
+                    locked_req.status = SupplierReorderRequest.STATUS_REJECTED
+                    locked_req.fulfilled_quantity = 0
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
+                    if reorder.remaining_quantity > 0:
+                        should_escalate_ids.append(reorder.id)
+                    feedback_messages.append(f"{locked_req.reorder_request.product.name}: We will contact the next supplier.")
                 else:
-                    locked_request.fulfilled_quantity = quantity
-                    if quantity < locked_request.requested_quantity:
-                        locked_request.status = SupplierReorderRequest.STATUS_PARTIAL
+                    locked_req.fulfilled_quantity = quantity
+                    if quantity < locked_req.requested_quantity:
+                        locked_req.status = SupplierReorderRequest.STATUS_PARTIAL
                     else:
-                        locked_request.status = SupplierReorderRequest.STATUS_ACCEPTED
-                    locked_request.responded_at = now
-                    locked_request.save(
-                        update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"]
-                    )
+                        locked_req.status = SupplierReorderRequest.STATUS_ACCEPTED
+                    locked_req.responded_at = now
+                    locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
 
                     reorder.remaining_quantity = max(reorder.remaining_quantity - quantity, 0)
                     if reorder.remaining_quantity == 0:
@@ -887,53 +1156,36 @@ def supplier_reorder_response_view(request, token):
                     reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
 
                     if reorder.remaining_quantity > 0:
-                        should_escalate = True
-                        feedback = (
-                            f"Response received. We recorded {quantity} unit(s) and will contact the next supplier "
-                            f"for the remaining {reorder.remaining_quantity}."
-                        )
+                        should_escalate_ids.append(reorder.id)
+                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Will contact next supplier for {reorder.remaining_quantity}.")
                     else:
-                        feedback = f"Thank you. We recorded {quantity} unit(s) for this reorder request."
+                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Request fulfilled.")
 
-            if should_escalate:
-                notify_next_supplier.delay(supplier_request.reorder_request_id)
+        for esc_id in set(should_escalate_ids):
+            notify_next_supplier.delay(esc_id)
 
-            final_request = SupplierReorderRequest.objects.select_related(
-                "supplier", "reorder_request__product"
-            ).get(pk=supplier_request.pk)
-            return render(
-                request,
-                "products/supplier_reorder_response.html",
-                {
-                    "supplier_request": final_request,
-                    "can_respond": False,
-                    "message_type": "success",
-                    "message": feedback,
-                },
-            )
-    else:
-        form = SupplierReorderResponseForm(max_quantity=max_quantity)
-
-    can_respond = (
-        supplier_request.status == SupplierReorderRequest.STATUS_PENDING
-        and timezone.now() <= supplier_request.expires_at
-    )
-    message = ""
-    message_type = "info"
-    if not can_respond:
-        message = "This link is expired or already used."
-        message_type = "error"
+        return render(
+            request,
+            "products/supplier_reorder_response.html",
+            {
+                "supplier": supplier,
+                "can_respond": False,
+                "message_type": "success",
+                "message": "Feedback received successfully. Thank you for your response.",
+                "branch_groups": [],
+                "pending_count": 0,
+            },
+        )
 
     return render(
         request,
         "products/supplier_reorder_response.html",
         {
-            "supplier_request": supplier_request,
-            "form": form,
-            "max_quantity": max_quantity,
-            "can_respond": can_respond,
-            "message": message,
-            "message_type": message_type,
+            "supplier": supplier,
+            "pending_requests": pending_requests,
+            "can_respond": bool(pending_requests),
+            "branch_groups": branch_groups,
+            "pending_count": len(pending_requests),
         },
     )
 

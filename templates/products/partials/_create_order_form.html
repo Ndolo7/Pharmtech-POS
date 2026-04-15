@@ -1,0 +1,50 @@
+<div {% if request.htmx %}class="modal-backdrop"{% endif %} x-data {% if request.htmx %}@click.self="document.getElementById('modal-container').innerHTML=''"{% endif %}>
+  <div {% if request.htmx %}class="modal" style="max-width:500px"{% endif %}>
+    <div class="{% if request.htmx %}modal-header{% else %}mb-4 border-b pb-2{% endif %}">
+      <h3 {% if not request.htmx %}class="text-lg font-bold"{% endif %}>Create Manual Order</h3>
+      {% if request.htmx %}<button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>{% endif %}
+    </div>
+    <div class="{% if request.htmx %}modal-body{% endif %}">
+      <form method="post"
+        hx-post="{% url 'create-order' %}"
+        hx-swap="none"
+        hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; }">
+        {% csrf_token %}
+        <div class="form-group">
+          <label>Product *</label>
+          <select name="product_id" class="form-input search-select" required>
+            <option value="">Select product to order</option>
+            {% for p in products %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if all_branches %}
+        <div class="form-group">
+          <label>Target Branch *</label>
+          <select name="branch_id" class="form-input" required>
+            <option value="">Select branch</option>
+            {% for b in all_branches %}
+              <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% else %}
+          {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
+          <div class="message message-info" style="margin-bottom:12px;max-width:none">
+            Ordering for branch: <strong>{{ active_branch.name }}</strong>
+          </div>
+        {% endif %}
+        <div class="form-group">
+          <label>Packets to Order *</label>
+          <input type="number" name="packets" class="form-input" required min="1" placeholder="e.g. 5">
+          <span class="text-xs text-muted" style="display:block;margin-top:4px;">Amount is in supplier packet sizes, not individual units.</span>
+        </div>
+        <div class="modal-footer" style="padding:0;margin-top:16px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Order</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

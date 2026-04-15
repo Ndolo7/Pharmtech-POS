@@ -72,7 +72,9 @@ class AutoReorderRequest(models.Model):
     current_stock_snapshot = models.IntegerField()
     requested_quantity = models.PositiveIntegerField()
     remaining_quantity = models.PositiveIntegerField()
+    branch_requirements = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    admin_notified = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -110,6 +112,7 @@ class SupplierReorderRequest(models.Model):
     priority = models.PositiveIntegerField()
     requested_quantity = models.PositiveIntegerField()
     fulfilled_quantity = models.PositiveIntegerField(default=0)
+    received_quantity = models.PositiveIntegerField(default=0)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
@@ -128,6 +131,12 @@ class SupplierReorderRequest(models.Model):
     @property
     def is_expired(self):
         return timezone.now() > self.expires_at
+
+    @property
+    def pending_quantity(self):
+        if self.fulfilled_quantity > 0:
+            return max(0, self.fulfilled_quantity - self.received_quantity)
+        return 0
 
 
 class Stock(models.Model):

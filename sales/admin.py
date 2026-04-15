@@ -1,10 +1,15 @@
 from django.contrib import admin
 
-from .models import Sale, SaleItem, Shift
+from .models import Sale, SaleItem, Shift, ShiftExpense
 
 
 class SaleItemInline(admin.TabularInline):
     model = SaleItem
+    extra = 0
+
+
+class ShiftExpenseInline(admin.TabularInline):
+    model = ShiftExpense
     extra = 0
 
 
@@ -42,4 +47,12 @@ class ShiftAdmin(admin.ModelAdmin):
     list_filter = ("is_closed", "branch", "cashier", "start_time")
     search_fields = ("cashier__username", "branch__name")
     ordering = ("-start_time",)
+    inlines = [ShiftExpenseInline]
 
+
+@admin.register(ShiftExpense)
+class ShiftExpenseAdmin(admin.ModelAdmin):
+    list_display = ("id", "shift", "amount", "description", "created_at")
+    list_filter = ("shift__branch", "shift__cashier", "created_at")
+    search_fields = ("description", "shift__cashier__username", "shift__branch__name")
+    ordering = ("-created_at",)

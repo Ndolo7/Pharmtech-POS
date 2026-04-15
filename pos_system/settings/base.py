@@ -50,6 +50,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
+    "pos_system.middleware.HtmxSuccessAutoRefreshMiddleware",
 ]
 
 ROOT_URLCONF = "pos_system.urls"
@@ -114,7 +115,13 @@ EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 ANYMAIL = {
     "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
 }
-ADMIN_EMAIL = config("ADMIN_EMAIL", default="admin@example.com")
+ADMIN_EMAIL = config("ADMIN_EMAIL", default="admin@example.com") 
+ADMIN_PHONE = config("ADMIN_PHONE", default="254746605208")
+
+# SMS settings (SMS Leopard)
+SMS_LEOPARD_API_KEY = config("SMS_LEOPARD_API_KEY", default="")
+SMS_LEOPARD_API_SECRET = config("SMS_LEOPARD_API_SECRET", default="")
+SMS_LEOPARD_SOURCE = config("SMS_LEOPARD_SOURCE", default="SMS_Leopard")
 
 # Automated reorder settings
 SITE_BASE_URL = config("SITE_BASE_URL", default="http://localhost:8000")

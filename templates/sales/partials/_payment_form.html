@@ -28,7 +28,7 @@
     hx-target="#sale-result"
     hx-swap="innerHTML"
     hx-on::after-request="onSaleComplete($event)"
-    @submit.prevent="submitSale()">
+    @submit="submitSale($event)">
     {% csrf_token %}
     <input type="hidden" name="cart_json" :value="JSON.stringify(cart)">
     <input type="hidden" name="payment_method" :value="paymentMethod">
@@ -40,7 +40,7 @@
     <button type="submit"
       class="btn btn-primary w-full"
       style="padding:12px;font-size:15px;margin-top:4px"
-      :disabled="cart.length===0 || processing || !shift_active">
+      :disabled="cart.length===0 || processing || !shift_active || !isCartStockAvailable()">
       <span x-show="!processing">Process Sale - KES <span x-text="getTotal().toFixed(2)"></span></span>
       <span x-show="processing">Processing...</span>
     </button>

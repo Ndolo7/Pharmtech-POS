@@ -1,10 +1,13 @@
-{% if data %}
+{% if errors %}
+<div class="message message-error">{{ errors }}</div>
+{% elif data is not None %}
 <div class="card">
   <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Cashier</th><th>Date</th>
         <th>Expected Cash</th><th>Declared Cash</th><th>Cash Variance</th>
+        <th>Total Expenses</th><th>Expense Details</th>
         <th>Expected M-Pesa</th><th>Declared M-Pesa</th><th>M-Pesa Variance</th>
       </tr></thead>
       <tbody>
@@ -17,6 +20,8 @@
           <td class="{% if s.cash_variance < 0 %}text-danger{% elif s.cash_variance > 0 %}text-success{% endif %} font-bold">
             KES {{ s.cash_variance|floatformat:2 }}
           </td>
+          <td>KES {{ s.total_expenses|floatformat:2 }}</td>
+          <td class="text-sm">{{ s.expense_details|default:"-" }}</td>
           <td>KES {{ s.expected_mpesa|floatformat:2 }}</td>
           <td>KES {{ s.declared_mpesa|floatformat:2 }}</td>
           <td class="{% if s.mpesa_variance < 0 %}text-danger{% elif s.mpesa_variance > 0 %}text-success{% endif %} font-bold">
@@ -24,7 +29,7 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="empty-state">No closed shifts found for this period.</td></tr>
+        <tr><td colspan="10" class="empty-state">No closed shifts found for this period.</td></tr>
         {% endfor %}
       </tbody>
     </table>

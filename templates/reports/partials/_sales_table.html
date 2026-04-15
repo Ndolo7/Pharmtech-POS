@@ -28,7 +28,13 @@
         </tr></thead>
         <tbody>
           {% for row in data.daily %}
-          <tr {% if row.count == 0 %}style="opacity:.5"{% endif %}>
+          <tr
+            hx-get="{% url 'sales-day-breakdown-modal' %}?date={{ row.date_iso }}{% if active_branch_id and active_branch_id != 'all' %}&branch_id={{ active_branch_id }}{% endif %}"
+            hx-target="#session-sales-modal-content"
+            hx-swap="innerHTML"
+            @click="$dispatch('open-session-sales', { title: 'Daily Sales · {{ row.date }}' })"
+            title="View itemized sales for {{ row.date }}"
+            style="cursor:pointer;{% if row.count == 0 %}opacity:.5{% endif %}">
             <td>{{ row.date }}</td>
             <td>{{ row.count }}</td>
             <td>KES {{ row.total_cash|floatformat:2 }}</td>

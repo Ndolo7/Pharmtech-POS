@@ -1,5 +1,8 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.db.models import Sum
 
 User = get_user_model()
 
@@ -57,11 +60,13 @@ class Shift(models.Model):
 
     def calculate_expected_cash(self):
         sales = self.sale_set.all()
-        return sum(sale.cash_amount for sale in sales) + self.opening_cash
+        sales_cash_total = sum((sale.cash_amount for sale in sales), Decimal("0"))
+        expenses_total = self.expenses.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        return (sales_cash_total + self.opening_cash) - expenses_total
 
     def calculate_expected_mpesa(self):
         sales = self.sale_set.all()
-        return sum(sale.mpesa_amount for sale in sales)
+        return sum((sale.mpesa_amount for sale in sales), Decimal("0"))
 
     def calculate_variances(self):
         if self.closing_cash_declared is not None:
@@ -71,3 +76,16 @@ class Shift(models.Model):
         if self.closing_mpesa_declared is not None:
             expected_mpesa = self.calculate_expected_mpesa()
             self.mpesa_variance = self.closing_mpesa_declared - expected_mpesa
+
+
+class ShiftExpense(models.Model):
+    shift = models.ForeignKey(Shift, on_delete=models.CASCADE, related_name="expenses")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.description} - KES {self.amount}"
