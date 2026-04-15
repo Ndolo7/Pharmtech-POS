@@ -24,8 +24,21 @@
           {% endfor %}
         </select>
       </div>
+      {% if can_select_branch %}
+      <div class="form-group" style="margin:0; width:220px;">
+        <select name="branch_id" class="form-input search-select">
+          <option value="all" {% if active_branch_id == "all" %}selected{% endif %}>All Branches</option>
+          {% for b in branch_options %}
+          <option value="{{ b.id }}" {% if active_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <button type="submit" class="btn btn-primary">Generate</button>
     </form>
+    {% if not can_select_branch and active_branch %}
+    <div class="text-muted text-sm mt-2">Showing branch: <strong>{{ active_branch.name }}</strong></div>
+    {% endif %}
   </div>
 </div>
 <div id="report-results">{% include "reports/partials/_supplier_table.html" %}</div>
