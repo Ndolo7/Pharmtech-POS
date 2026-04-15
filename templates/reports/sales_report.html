@@ -3,9 +3,9 @@
 {% block page_title %}Sales Report{% endblock %}
 
 {% block content %}
-<div class="card mb-4">
+<div class="card mb-4" style="overflow: visible;">
   <div class="card-header"><h2>Filter</h2></div>
-  <div class="card-body">
+  <div class="card-body" style="overflow: visible;">
     <form hx-get="{% url 'sales-report' %}"
       hx-target="#report-results"
       hx-swap="innerHTML"
@@ -18,11 +18,24 @@
       <div class="form-group" style="margin:0">
         <input type="date" name="end_date" class="form-input" value="{{ end_date }}" required>
       </div>
+      {% if can_select_branch %}
+      <div class="form-group" style="margin:0; width:220px;">
+        <select name="branch_id" class="form-input search-select">
+          <option value="all" {% if active_branch_id == "all" %}selected{% endif %}>All Branches</option>
+          {% for b in branch_options %}
+          <option value="{{ b.id }}" {% if active_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <button type="submit" class="btn btn-primary">
         <span class="htmx-indicator spinner" id="loading"></span>
         Generate Report
       </button>
     </form>
+    {% if not can_select_branch and active_branch %}
+    <div class="text-muted text-sm mt-2">Showing branch: <strong>{{ active_branch.name }}</strong></div>
+    {% endif %}
   </div>
 </div>
 
