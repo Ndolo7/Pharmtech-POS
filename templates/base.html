@@ -7,6 +7,8 @@
   <title>{% block title %}ZIADA POS{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="{% static 'branding/logo.svg' %}">
+  <link rel="shortcut icon" href="{% static 'branding/logo.svg' %}">
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
   <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.default.min.css" rel="stylesheet">
   {% block extra_css %}{% endblock %}
@@ -45,18 +47,27 @@
     </div>
   </div>
 
+  <div
+    id="stock-success-popup"
+    class="message message-success"
+    aria-live="polite"
+    style="display:none;opacity:0;transition:opacity .22s ease;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1200;width:min(760px,92vw);padding:32px 36px;font-size:32px;font-weight:700;line-height:1.25;text-align:center;border-width:2px;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.28);max-width:none;pointer-events:none;"
+  >
+    <span id="stock-success-popup-text">Stock updated successfully.</span>
+  </div>
+
   <div id="modal-container"></div>
   <div class="modal-backdrop"
-    x-data="{ showSessionSalesModal: false }"
+    x-data="{ showSessionSalesModal: false, sessionSalesTitle: 'Session Sales' }"
     x-show="showSessionSalesModal"
-    @open-session-sales.window="showSessionSalesModal=true"
+    @open-session-sales.window="showSessionSalesModal=true; sessionSalesTitle=($event.detail && $event.detail.title) ? $event.detail.title : 'Session Sales'"
     @close-session-sales.window="showSessionSalesModal=false"
     style="display:none"
     @click.self="showSessionSalesModal=false"
     @keydown.escape.window="showSessionSalesModal=false">
     <div class="modal modal-wide">
       <div class="modal-header">
-        <h3>Session Sales</h3>
+        <h3 x-text="sessionSalesTitle">Session Sales</h3>
         <button type="button" class="btn btn-secondary btn-sm" @click="showSessionSalesModal=false">Close</button>
       </div>
       <div class="modal-body" id="session-sales-modal-content">
@@ -112,6 +123,80 @@
     document.body.addEventListener("htmx:afterSwap", scheduleMessageDismiss);
   </script>
   <script>
+    (function() {
+      if (window.__stockSuccessPopupBound) return;
+      window.__stockSuccessPopupBound = true;
+
+      const POPUP_STORAGE_KEY = "stockSuccessPopupState";
+      let hideTimer = null;
+      let finishTimer = null;
+
+      function clearStoredPopup() {
+        try {
+          window.sessionStorage.removeItem(POPUP_STORAGE_KEY);
+        } catch (err) {}
+      }
+
+      function storePopup(message, durationMs) {
+        try {
+          window.sessionStorage.setItem(
+            POPUP_STORAGE_KEY,
+            JSON.stringify({
+              message: message,
+              expiresAt: Date.now() + durationMs,
+            }),
+          );
+        } catch (err) {}
+      }
+
+      function showStockSuccess(detail, options = {}) {
+        const popup = document.getElementById("stock-success-popup");
+        const text = document.getElementById("stock-success-popup-text");
+        if (!popup || !text) return;
+
+        const durationMs = Number.isFinite(options.durationMs) ? options.durationMs : 4000;
+        const shouldPersist = options.persist !== false;
+        const message = (detail && detail.message) ? detail.message : "Stock updated successfully.";
+        text.textContent = message;
+
+        if (hideTimer) window.clearTimeout(hideTimer);
+        if (finishTimer) window.clearTimeout(finishTimer);
+
+        if (shouldPersist) storePopup(message, durationMs);
+
+        popup.style.display = "block";
+        popup.style.opacity = "1";
+
+        hideTimer = window.setTimeout(() => {
+          popup.style.opacity = "0";
+          finishTimer = window.setTimeout(() => {
+            popup.style.display = "none";
+            clearStoredPopup();
+          }, 220);
+        }, durationMs);
+      }
+
+      document.addEventListener("stock-action-success", (event) => {
+        showStockSuccess(event.detail || {});
+      });
+
+      try {
+        const storedRaw = window.sessionStorage.getItem(POPUP_STORAGE_KEY);
+        if (storedRaw) {
+          const stored = JSON.parse(storedRaw);
+          const remaining = Number(stored?.expiresAt || 0) - Date.now();
+          if (remaining > 0) {
+            showStockSuccess({ message: stored.message || "Stock updated successfully." }, { durationMs: remaining, persist: false });
+          } else {
+            clearStoredPopup();
+          }
+        }
+      } catch (err) {
+        clearStoredPopup();
+      }
+    })();
+  </script>
+  <script>
     function bindPasswordToggles(root) {
       const scope = root || document;
       const toggles = scope.querySelectorAll("[data-password-target]");
@@ -140,6 +225,7 @@
       const selects = (root || document).querySelectorAll('.search-select:not(.tomselected)');
       selects.forEach(s => new TomSelect(s, { 
           create: false, 
+          dropdownParent: 'body',
           sortField: { field: "text", direction: "asc" },
           onChange: function(value) {
             htmx.trigger(this.input, 'change');
