@@ -1,0 +1,55 @@
+{% if error %}
+<div class="message message-error" style="max-width:none">
+  {{ error }}
+</div>
+{% else %}
+<div class="session-sales-summary">
+  <div>
+    <div class="text-muted text-sm">Invoice</div>
+    <div class="font-medium">{{ purchase.invoice_number }}</div>
+  </div>
+  <div>
+    <div class="text-muted text-sm">Supplier</div>
+    <div class="font-medium">{{ purchase.supplier.name }}</div>
+  </div>
+  <div>
+    <div class="text-muted text-sm">Date</div>
+    <div class="font-medium">{{ purchase.created_at|date:"d M Y H:i" }}</div>
+  </div>
+  <div>
+    <div class="text-muted text-sm">Branch</div>
+    <div class="font-medium">{{ purchase.branch.name }}</div>
+  </div>
+  <div>
+    <div class="text-muted text-sm">Total</div>
+    <div class="font-medium">KES {{ purchase.total_amount|floatformat:2 }}</div>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="session-sales-summary-table">
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th>Qty</th>
+        <th>Unit Cost</th>
+        <th>Total Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.product.name }}</td>
+        <td>{{ item.quantity }}</td>
+        <td>KES {{ item.unit_cost|floatformat:2 }}</td>
+        <td>KES {{ item.total_cost|floatformat:2 }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="4" class="empty-state" style="padding:18px">No line items found for this invoice.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
