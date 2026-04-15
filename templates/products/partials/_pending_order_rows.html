@@ -3,17 +3,22 @@
     <label class="font-medium">Items Expected from Supplier</label>
   </div>
   <div id="items-list">
-    <div style="display:grid;grid-template-columns:3fr 1fr 1fr;gap:8px;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--gray-500)">
+    <div style="display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--gray-500)">
       <div>PRODUCT</div>
       <div>QTY (PACKETS)</div>
-      <div>UNIT PRICE</div>
+      <div>COST / PKT</div>
+      <div>SELLING / UNIT</div>
     </div>
     {% for req in pending_requests %}
-    <div class="receive-row" style="display:grid;grid-template-columns:3fr 1fr 1fr;gap:8px;margin-bottom:8px">
-      <input type="hidden" name="reorder_request_id[]" value="{{ req.id }}">
-      <input type="text" class="form-input" readonly style="background:var(--gray-50)" value="{{ req.reorder_request.product.name }}">
-      <input type="number" name="quantity[]" class="form-input" required min="0" max="{{ req.branch_pending_quantity|default:req.pending_quantity }}" value="{{ req.branch_pending_quantity|default:req.pending_quantity }}">
-      <div class="form-input" style="background:var(--gray-50);display:flex;align-items:center">{{ req.unit_price|default:"0.00" }}</div>
+    <div class="receive-row" data-pack-qty="{{ req.reorder_request.product.pack_quantity|default:1 }}" style="margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:8px;">
+        <input type="hidden" name="reorder_request_id[]" value="{{ req.id }}">
+        <input type="text" class="form-input" readonly style="background:var(--gray-50)" value="{{ req.reorder_request.product.name }}">
+        <input type="number" name="quantity[]" class="form-input" required min="0" max="{{ req.branch_pending_quantity|default:req.pending_quantity }}" value="{{ req.branch_pending_quantity|default:req.pending_quantity }}">
+        <input type="number" name="cost_price[]" class="form-input" required min="0.01" step="0.01" value="{{ req.reorder_request.product.cost_price|floatformat:2 }}">
+        <input type="number" name="selling_price[]" class="form-input" required min="0.01" step="0.01" value="{{ req.reorder_request.product.unit_price|floatformat:2 }}">
+      </div>
+      <div class="receive-margin-warning text-danger text-sm" style="display:none; margin-top:4px;"></div>
     </div>
     {% endfor %}
   </div>
