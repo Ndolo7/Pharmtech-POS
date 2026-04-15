@@ -1,0 +1,10 @@
+<div id="transfer-destination-field" class="form-group">
+  <label>Destination Branch *</label>
+  <select name="to_branch" class="form-input" required>
+    <option value="">Select destination branch</option>
+    {% for b in destination_branches %}
+      <option value="{{ b.id }}" {% if selected_to_branch_id|stringformat:"s" == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+    {% endfor %}
+  </select>
+  {% if to_branch_errors %}<div class="text-danger text-sm">{{ to_branch_errors }}</div>{% endif %}
+</div>
