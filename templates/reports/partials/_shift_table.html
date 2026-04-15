@@ -1,4 +1,6 @@
-{% if data %}
+{% if errors %}
+<div class="message message-error">{{ errors }}</div>
+{% elif data is not None %}
 <div class="card">
   <div class="table-wrap">
     <table>
