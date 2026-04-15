@@ -60,9 +60,104 @@
 
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-success">Receive Stock</button>
+          <button type="submit" id="receive-stock-submit" class="btn btn-success">Receive Stock</button>
         </div>
       </form>
     </div>
   </div>
 </div>
+
+<script>
+(function() {
+  function toNumber(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function validateReceivePricing() {
+    const rows = document.querySelectorAll("#receive-items .receive-row");
+    const submitButton = document.getElementById("receive-stock-submit");
+    if (!submitButton) return;
+
+    const hasRows = rows.length > 0;
+    let allValid = hasRows;
+    rows.forEach((row) => {
+      const qtyInput = row.querySelector('input[name="quantity[]"]');
+      const costInput = row.querySelector('input[name="cost_price[]"]');
+      const sellingInput = row.querySelector('input[name="selling_price[]"]');
+      const warning = row.querySelector(".receive-margin-warning");
+      if (!qtyInput || !costInput || !sellingInput || !warning) return;
+      const packQty = toNumber(row.getAttribute("data-pack-qty")) || 1;
+
+      const qty = toNumber(qtyInput.value);
+      const costPerPacket = toNumber(costInput.value);
+      const selling = toNumber(sellingInput.value);
+      const shouldValidate = Number.isFinite(qty) && qty > 0;
+
+      let isValid = true;
+      let warningText = "";
+
+      if (shouldValidate) {
+        const costPerUnit = costPerPacket / packQty;
+        const minSelling = costPerUnit * 1.33;
+        if (!Number.isFinite(costPerPacket) || costPerPacket <= 0) {
+          isValid = false;
+          warningText = "Cost per packet must be greater than 0.";
+        } else if (!Number.isFinite(packQty) || packQty <= 0) {
+          isValid = false;
+          warningText = "Invalid pack quantity for selected product.";
+        } else if (!Number.isFinite(selling) || selling < minSelling) {
+          const roundedMinSelling = Math.round(minSelling).toFixed(2);
+          const roundedCostPerUnit = Math.round(costPerUnit).toFixed(2);
+          isValid = false;
+          warningText = `Selling price per unit must be at least ${roundedMinSelling} (cost/unit = ${roundedCostPerUnit}).`;
+        }
+
+        if (Number.isFinite(costPerPacket) && costPerPacket > 0 && Number.isFinite(packQty) && packQty > 0) {
+          const computedMin = ((costPerPacket / packQty) * 1.33).toFixed(2);
+          sellingInput.setAttribute("min", computedMin);
+        } else {
+          sellingInput.setAttribute("min", "0.01");
+        }
+      }
+
+      if (!isValid) {
+        allValid = false;
+        sellingInput.style.borderColor = "var(--danger)";
+        warning.textContent = warningText;
+        warning.style.display = "block";
+      } else {
+        sellingInput.style.borderColor = "";
+        warning.textContent = "";
+        warning.style.display = "none";
+      }
+    });
+
+    submitButton.disabled = hasRows ? !allValid : true;
+  }
+
+  window.validateReceivePricing = validateReceivePricing;
+
+  if (!window.__receivePricingListenersBound) {
+    document.addEventListener("input", function(event) {
+      if (
+        event.target.matches('#receive-items input[name="quantity[]"]') ||
+        event.target.matches('#receive-items input[name="cost_price[]"]') ||
+        event.target.matches('#receive-items input[name="selling_price[]"]')
+      ) {
+        validateReceivePricing();
+      }
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function(event) {
+      if (event.target && event.target.id === "receive-items") {
+        validateReceivePricing();
+      }
+    });
+
+    window.__receivePricingListenersBound = true;
+  }
+
+  setTimeout(validateReceivePricing, 0);
+})();
+</script>
