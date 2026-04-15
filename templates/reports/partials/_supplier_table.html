@@ -12,7 +12,13 @@
         <thead><tr><th>Invoice #</th><th>Date</th><th>Amount</th></tr></thead>
         <tbody>
           {% for inv in supplier.invoices %}
-          <tr>
+          <tr
+            hx-get="{% url 'supplier-invoice-items-modal' %}?invoice_id={{ inv.id }}{% if active_branch_id and active_branch_id != 'all' %}&branch_id={{ active_branch_id }}{% endif %}"
+            hx-target="#session-sales-modal-content"
+            hx-swap="innerHTML"
+            @click="$dispatch('open-session-sales', { title: 'Supplier Invoice · {{ inv.number }}' })"
+            title="View supplied items for invoice {{ inv.number }}"
+            style="cursor:pointer;">
             <td>{{ inv.number }}</td>
             <td>{{ inv.date }}</td>
             <td>KES {{ inv.amount|floatformat:2 }}</td>
