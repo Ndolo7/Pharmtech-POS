@@ -1,6 +1,8 @@
+{% load static %}
 <aside class="sidebar" :class="{'open': sidebarOpen}">
   <div class="sidebar-logo flex gap-2 items-center justify-between" style="padding-right: 12px; margin-bottom: 24px;">
-    <div style="padding-left:24px;">
+    <div class="sidebar-brand-block" style="padding-left:24px;">
+      <img src="{% static 'branding/logo.svg' %}" alt="ZIADA logo" class="sidebar-brand-mark">
       <h1 class="menu-text" style="margin:0;">ZIADA</h1>
       <p class="menu-text" style="margin:0;">Point of Sale System</p>
     </div>
@@ -67,11 +69,11 @@
           <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           Sales Report
         </a>
-        <a href="/reports/suppliers/" title="Supplier Report" {% if request.path == "/reports/supplier/" %}class="active"{% endif %}>
+        <a href="/reports/suppliers/" title="Supplier Report" {% if request.path == "/reports/suppliers/" %}class="active"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
           Supplier Report
         </a>
-        <a href="/reports/shifts/" title="Shift Report" {% if request.path == "/reports/shift/" %}class="active"{% endif %}>
+        <a href="/reports/shifts/" title="Shift Report" {% if request.path == "/reports/shifts/" %}class="active"{% endif %}>
           <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Shift Report
         </a>
