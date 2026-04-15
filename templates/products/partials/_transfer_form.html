@@ -13,7 +13,7 @@
         <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Close</button>
       </div>
       {% else %}
-      <form method="post"
+      <form id="transfer-stock-form" method="post"
         hx-post="{% url 'transfer-stock' %}"
         hx-swap="none"
         hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
@@ -21,7 +21,11 @@
         {% if all_branches %}
         <div class="form-group" style="margin-bottom:12px;">
           <label>Source Branch *</label>
-          <select name="from_branch_id" class="form-input" required>
+          <select name="from_branch_id" class="form-input" required
+            hx-get="{% url 'transfer-destination-branches' %}"
+            hx-target="#transfer-destination-field"
+            hx-swap="outerHTML"
+            hx-include="[name='from_branch_id'],[name='to_branch']">
             <option value="">Select source branch</option>
             {% for b in all_branches %}
               <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
@@ -37,11 +41,7 @@
           {% endif %}
         {% endif %}
 
-        <div class="form-group">
-          <label>Destination Branch *</label>
-          {{ form.to_branch }}
-          {% if form.to_branch.errors %}<div class="text-danger text-sm">{{ form.to_branch.errors|striptags }}</div>{% endif %}
-        </div>
+        {% include "products/partials/_transfer_destination_field.html" with to_branch_errors=form.to_branch.errors|striptags %}
 
         <div class="form-group">
           <label>Notes</label>
@@ -72,7 +72,7 @@
 
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-primary">Transfer Stock</button>
+          <button type="submit" id="transfer-stock-submit" class="btn btn-primary">Transfer Stock</button>
         </div>
       </form>
       {% endif %}
