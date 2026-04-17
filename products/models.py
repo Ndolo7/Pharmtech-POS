@@ -210,6 +210,7 @@ class Purchase(models.Model):
     branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE)
     invoice_number = models.CharField(max_length=100)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    supplier_confirmation_emailed_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
 
