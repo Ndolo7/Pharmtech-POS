@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from accounts.models import User
 from branches.models import Branch
-from products.models import Product, Purchase, PurchaseItem, Supplier
+from products.models import AutoReorderRequest, Product, Purchase, PurchaseItem, Supplier
 from sales.models import Sale, SaleItem
 
 
@@ -72,10 +72,65 @@ class ReportsBranchScopeTests(TestCase):
         sales_response = self.client.get(reverse("sales-report"))
         supplier_response = self.client.get(reverse("supplier-report"))
         shift_response = self.client.get(reverse("shift-report"))
+        orders_response = self.client.get(reverse("orders-report"))
 
         self.assertContains(sales_response, f'value="{today_iso}"')
         self.assertContains(supplier_response, f'value="{today_iso}"')
         self.assertContains(shift_response, f'value="{today_iso}"')
+        self.assertContains(orders_response, f'value="{today_iso}"')
+
+    def test_orders_report_honors_branch_filter(self):
+        product = Product.objects.create(
+            name="Orders Report Product",
+            barcode="ORD-REPORT-001",
+            description="",
+            unit_price=Decimal("100.00"),
+            cost_price=Decimal("50.00"),
+            reorder_level=5,
+            max_stock=20,
+            pack_quantity=1,
+            is_active=True,
+        )
+        wendani_order = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=20,
+            current_stock_snapshot=2,
+            requested_quantity=10,
+            remaining_quantity=3,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            branch_requirements={self.wendani.name: 10},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        sukari_order = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=20,
+            current_stock_snapshot=1,
+            requested_quantity=8,
+            remaining_quantity=0,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={self.sukari.name: 8},
+            status=AutoReorderRequest.STATUS_FULFILLED,
+        )
+        AutoReorderRequest.objects.filter(pk=wendani_order.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 8, 0, 0))
+        )
+        AutoReorderRequest.objects.filter(pk=sukari_order.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("orders-report"),
+            {
+                "start_date": "2026-04-15",
+                "end_date": "2026-04-15",
+                "branch_id": str(self.wendani.id),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f"ORD-{wendani_order.id}")
+        self.assertNotContains(response, f"ORD-{sukari_order.id}")
 
     def test_shift_report_shows_empty_state_when_no_rows(self):
         self.client.force_login(self.super_admin)

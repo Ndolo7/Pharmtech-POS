@@ -1,6 +1,9 @@
 import json
+import logging
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from math import ceil
 from django.apps import apps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -36,7 +39,9 @@ from .models import (
     Transfer,
     TransferItem,
 )
-from .tasks import notify_next_supplier
+from .tasks import notify_next_supplier, send_purchase_confirmation_to_supplier
+
+logger = logging.getLogger(__name__)
 
 
 def _to_non_negative_int(value):
@@ -71,6 +76,34 @@ def _normalized_branch_requirements(branch_requirements):
     return payload
 
 
+def _max_packets_allowed_for_product(product):
+    pack_quantity = max(int(product.pack_quantity or 1), 1)
+    max_stock_units = max(int(product.max_stock or 1), 1)
+    return max(int(ceil(max_stock_units / float(pack_quantity))), 1)
+
+
+def _pending_packets_by_product_branch(product_ids):
+    totals = defaultdict(int)
+    if not product_ids:
+        return totals
+
+    open_reorders = AutoReorderRequest.objects.filter(
+        status=AutoReorderRequest.STATUS_OPEN,
+        product_id__in=product_ids,
+    ).values_list("product_id", "branch_requirements")
+
+    for product_id, branch_requirements in open_reorders:
+        if not isinstance(branch_requirements, dict):
+            continue
+        for branch_name, packets in branch_requirements.items():
+            normalized_packets = _to_non_negative_int(packets)
+            if normalized_packets <= 0:
+                continue
+            totals[(int(product_id), str(branch_name))] += normalized_packets
+
+    return totals
+
+
 @login_required
 @require_GET
 def supplier_pending_orders_view(request):
@@ -80,6 +113,7 @@ def supplier_pending_orders_view(request):
 
     supplier = get_object_or_404(Supplier, pk=supplier_id)
     active_branch = _resolve_products_branch(request)
+    can_edit_quantity = _can_edit_receive_packets(request.user)
     pending_requests = []
 
     orders = SupplierReorderRequest.objects.filter(
@@ -98,7 +132,10 @@ def supplier_pending_orders_view(request):
     return render(
         request,
         "products/partials/_pending_order_rows.html",
-        {"pending_requests": pending_requests},
+        {
+            "pending_requests": pending_requests,
+            "can_edit_quantity": can_edit_quantity,
+        },
     )
 
 @login_required
@@ -108,7 +145,7 @@ def manual_order_create_view(request):
 
     Branch = apps.get_model("branches", "Branch")
     can_select_branch = request.user.can_manage_users()
-    all_branches = Branch.objects.filter(is_active=True) if can_select_branch else None
+    all_branches = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else None
     
     active_branch_id = request.GET.get("branch") or request.POST.get("branch_id")
     if not can_select_branch:
@@ -118,40 +155,237 @@ def manual_order_create_view(request):
         active_branch = Branch.objects.filter(pk=active_branch_id).first() if active_branch_id else None
 
     if request.method == "POST":
-        product_id = request.POST.get("product_id")
-        packets = int(request.POST.get("packets", 0))
-        if not product_id or packets <= 0 or not active_branch:
-            return HttpResponseBadRequest("Invalid inputs.")
+        product_ids = request.POST.getlist("product_id[]")
+        branch_ids = request.POST.getlist("branch_id[]")
+        packet_values = request.POST.getlist("packets[]")
 
-        product = get_object_or_404(Product, pk=product_id)
+        # Backward compatibility for single-line submissions.
+        if not product_ids and request.POST.get("product_id"):
+            product_ids = [request.POST.get("product_id")]
+            packet_values = [request.POST.get("packets")]
+            if can_select_branch:
+                branch_ids = [request.POST.get("branch_id")]
+
+        if not product_ids or not packet_values:
+            return HttpResponseBadRequest("Add at least one valid order line.")
+
+        if len(product_ids) != len(packet_values):
+            return HttpResponseBadRequest("Incomplete order lines were submitted.")
+
+        if can_select_branch and len(branch_ids) != len(product_ids):
+            return HttpResponseBadRequest("Each order line must include a target branch.")
+
+        if not can_select_branch and not active_branch:
+            return HttpResponseBadRequest("You are not assigned to a valid branch.")
+
+        parsed_lines = []
+        for index, (product_id_raw, packets_raw) in enumerate(zip(product_ids, packet_values), start=1):
+            product_id_raw = str(product_id_raw or "").strip()
+            packets_raw = str(packets_raw or "").strip()
+
+            if not product_id_raw and not packets_raw:
+                continue
+            if not product_id_raw:
+                return HttpResponseBadRequest(f"Select a product on line {index}.")
+
+            if not packets_raw:
+                return HttpResponseBadRequest(f"Enter packets to order on line {index}.")
+
+            try:
+                packets = int(packets_raw)
+            except (TypeError, ValueError):
+                return HttpResponseBadRequest(f"Packets must be a whole number on line {index}.")
+
+            if packets <= 0:
+                return HttpResponseBadRequest(f"Packets must be greater than zero on line {index}.")
+
+            if can_select_branch:
+                branch_id_raw = str(branch_ids[index - 1] or "").strip()
+                if not branch_id_raw:
+                    return HttpResponseBadRequest(f"Select a branch on line {index}.")
+            else:
+                branch_id_raw = str(active_branch.id)
+
+            try:
+                product_id = int(product_id_raw)
+                branch_id = int(branch_id_raw)
+            except (TypeError, ValueError):
+                return HttpResponseBadRequest(f"Invalid product/branch values on line {index}.")
+
+            parsed_lines.append((product_id, branch_id, packets))
+
+        if not parsed_lines:
+            return HttpResponseBadRequest("Add at least one valid order line.")
+
+        product_map = Product.objects.filter(pk__in={line[0] for line in parsed_lines}, is_active=True).in_bulk()
+        if len(product_map) != len({line[0] for line in parsed_lines}):
+            return HttpResponseBadRequest("One or more selected products are invalid or inactive.")
+
+        if can_select_branch:
+            branch_map = Branch.objects.filter(pk__in={line[1] for line in parsed_lines}, is_active=True).in_bulk()
+            if len(branch_map) != len({line[1] for line in parsed_lines}):
+                return HttpResponseBadRequest("One or more selected branches are invalid or inactive.")
+        else:
+            branch_map = {active_branch.id: active_branch}
+
+        pending_packets_map = _pending_packets_by_product_branch({line[0] for line in parsed_lines})
+        grouped_lines = defaultdict(int)
+        for product_id, branch_id, packets in parsed_lines:
+            grouped_lines[(product_id, branch_id)] += packets
+
+        for (product_id, branch_id), requested_packets in grouped_lines.items():
+            product = product_map[product_id]
+            branch = branch_map[branch_id]
+            pack_quantity = max(int(product.pack_quantity or 1), 1)
+            max_stock_units = max(int(product.max_stock or 1), 1)
+            current_branch_units = max(int(product.current_stock(branch) or 0), 0)
+            pending_packets_for_branch = pending_packets_map.get((product_id, branch.name), 0)
+            pending_branch_units = pending_packets_for_branch * pack_quantity
+            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
+            max_additional_packets = available_units // pack_quantity
+
+            if requested_packets > max_additional_packets:
+                return HttpResponseBadRequest(
+                    (
+                        f"{product.name} for {branch.name} can only accept {max_additional_packets} more packet(s) "
+                        f"without exceeding max stock ({max_stock_units} units). "
+                        f"Current stock: {current_branch_units} unit(s), open ordered: {pending_branch_units} unit(s)."
+                    )
+                )
+
+        now = timezone.now()
+        reorder_ids = set()
+        total_packets = 0
 
         with transaction.atomic():
-            reorder = AutoReorderRequest.objects.create(
-                product=product,
-                target_stock_level=product.max_stock,
-                current_stock_snapshot=product.current_stock(),
-                requested_quantity=packets,
-                remaining_quantity=packets,
-                branch_requirements={active_branch.name: packets},
-                status=AutoReorderRequest.STATUS_OPEN,
-            )
-        
-        notify_next_supplier.delay(reorder.id)
+            for (product_id, branch_id), packets in grouped_lines.items():
+                product = product_map[product_id]
+                branch = branch_map[branch_id]
+                total_packets += packets
+
+                existing_manual_reorder = (
+                    AutoReorderRequest.objects.select_for_update()
+                    .filter(
+                        product=product,
+                        status=AutoReorderRequest.STATUS_OPEN,
+                        origin=AutoReorderRequest.ORIGIN_MANUAL,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+
+                if existing_manual_reorder:
+                    branch_requirements = existing_manual_reorder.branch_requirements or {}
+                    if not isinstance(branch_requirements, dict):
+                        branch_requirements = {}
+
+                    branch_requirements[branch.name] = (
+                        _to_non_negative_int(branch_requirements.get(branch.name, 0)) + packets
+                    )
+
+                    existing_manual_reorder.target_stock_level = max(int(product.max_stock or 1), 1)
+                    existing_manual_reorder.current_stock_snapshot = product.current_stock()
+                    existing_manual_reorder.requested_quantity += packets
+                    existing_manual_reorder.remaining_quantity += packets
+                    existing_manual_reorder.branch_requirements = branch_requirements
+                    existing_manual_reorder.save(
+                        update_fields=[
+                            "target_stock_level",
+                            "current_stock_snapshot",
+                            "requested_quantity",
+                            "remaining_quantity",
+                            "branch_requirements",
+                            "updated_at",
+                        ]
+                    )
+
+                    live_pending_request = (
+                        existing_manual_reorder.supplier_requests.select_for_update()
+                        .filter(
+                            status=SupplierReorderRequest.STATUS_PENDING,
+                            expires_at__gt=now,
+                        )
+                        .order_by("-created_at")
+                        .first()
+                    )
+                    if live_pending_request:
+                        live_pending_request.requested_quantity += packets
+                        live_pending_request.save(update_fields=["requested_quantity", "updated_at"])
+
+                    reorder_ids.add(existing_manual_reorder.id)
+                    continue
+
+                reorder = AutoReorderRequest.objects.create(
+                    product=product,
+                    target_stock_level=max(int(product.max_stock or 1), 1),
+                    current_stock_snapshot=product.current_stock(),
+                    requested_quantity=packets,
+                    remaining_quantity=packets,
+                    origin=AutoReorderRequest.ORIGIN_MANUAL,
+                    branch_requirements={branch.name: packets},
+                    status=AutoReorderRequest.STATUS_OPEN,
+                )
+                reorder_ids.add(reorder.id)
+
+        for reorder_id in sorted(reorder_ids):
+            notify_next_supplier.delay(reorder_id)
+
+        line_count = len(grouped_lines)
         if request.htmx:
             return _with_hx_trigger(
                 HttpResponse(""),
                 "stock-action-success",
-                {"message": f"Manual order for {packets} packet(s) of {product.name} created successfully."},
+                {
+                    "message": (
+                        f"Manual order created. "
+                        "Supplier notifications sent."
+                    )
+                },
             )
-        messages.success(request, f"Manual order for {packets} packet(s) of {product.name} created successfully.")
+        messages.success(
+            request,
+            f"Manual order created. Supplier notifications were queued.",
+        )
         return HttpResponse("")
 
-    products = Product.objects.filter(is_active=True).order_by("name")
+    products = list(Product.objects.filter(is_active=True).order_by("name"))
+    product_ids = [product.id for product in products]
+    pending_packets_map = _pending_packets_by_product_branch(product_ids)
+    branch_scope = list(all_branches) if can_select_branch else ([active_branch] if active_branch else [])
+    capacity_by_product_branch = {}
+
+    for product in products:
+        product.max_packets_allowed = _max_packets_allowed_for_product(product)
+        pack_quantity = max(int(product.pack_quantity or 1), 1)
+        max_stock_units = max(int(product.max_stock or 1), 1)
+        branch_capacity = {}
+
+        for branch in branch_scope:
+            current_branch_units = max(int(product.current_stock(branch) or 0), 0)
+            pending_packets_for_branch = pending_packets_map.get((product.id, branch.name), 0)
+            pending_branch_units = pending_packets_for_branch * pack_quantity
+            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
+            max_additional_packets = available_units // pack_quantity
+            branch_capacity[str(branch.id)] = {
+                "max_packets": int(max_additional_packets),
+                "available_units": int(available_units),
+                "current_units": int(current_branch_units),
+                "pending_units": int(pending_branch_units),
+            }
+
+        capacity_by_product_branch[str(product.id)] = branch_capacity
+
+    try:
+        normalized_active_branch_id = int(active_branch_id) if active_branch_id else None
+    except (TypeError, ValueError):
+        normalized_active_branch_id = None
     return render(request, "products/partials/_create_order_form.html", {
         "products": products,
         "all_branches": all_branches,
         "active_branch": active_branch,
-        "active_branch_id": int(active_branch_id) if active_branch_id else None,
+        "active_branch_id": normalized_active_branch_id,
+        "can_select_branch": can_select_branch,
+        "manual_order_capacity_json": json.dumps(capacity_by_product_branch),
     })
 
 
@@ -160,6 +394,10 @@ def _can_manage_catalog(user):
 
 
 def _can_select_products_branch(user):
+    return user.is_superuser or getattr(user, "role", "") == "super_admin"
+
+
+def _can_edit_receive_packets(user):
     return user.is_superuser or getattr(user, "role", "") == "super_admin"
 
 
@@ -351,6 +589,7 @@ def receive_stock_view(request):
         return redirect("/")
 
     can_select_branch = _can_select_products_branch(request.user)
+    can_edit_quantity = _can_edit_receive_packets(request.user)
     active_branch = _resolve_products_branch(request)
 
     if request.method == "POST":
@@ -358,6 +597,7 @@ def receive_stock_view(request):
             active_branch = get_object_or_404(Branch, pk=request.POST["branch_id"])
 
         changed_products = []
+        purchase_id_for_confirmation = None
 
         if not active_branch:
             messages.error(request, "You are not assigned to a branch.")
@@ -423,6 +663,10 @@ def receive_stock_view(request):
                         raise ValueError(
                             f"{sup_req.reorder_request.product.name} is not pending for {active_branch.name}."
                         )
+                    if not can_edit_quantity and qty_int != max_allowed_packets:
+                        raise ValueError(
+                            f"QTY (PACKETS) for {sup_req.reorder_request.product.name} can only be edited by super admin."
+                        )
                     if qty_int > max_allowed_packets:
                         raise ValueError(
                             f"Cannot receive more than {max_allowed_packets} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
@@ -442,6 +686,7 @@ def receive_stock_view(request):
                     total_amount=total_amount,
                     created_by=request.user,
                 )
+                purchase_id_for_confirmation = purchase.id
 
                 for sup_req, product, qty_int, actual_units_received, cost_per_packet_dec, cost_per_unit_dec, selling_dec in cleaned_lines:
                     changed_products.append(product)
@@ -490,14 +735,23 @@ def receive_stock_view(request):
                         created_by=request.user,
                     )
 
+            if purchase_id_for_confirmation:
+                try:
+                    send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
+                except Exception:
+                    logger.exception(
+                        "Failed to queue supplier purchase confirmation task",
+                        extra={"purchase_id": purchase_id_for_confirmation},
+                    )
+
             if request.htmx:
                 response = _rows_oob_response(request, changed_products, branch=active_branch)
                 return _with_hx_trigger(
                     response,
                     "stock-action-success",
-                    {"message": "Stock received successfully."},
+                    {"message": "Stock received successfully. Supplier Receipt confirmation has been sent."},
                 )
-            messages.success(request, "Stock received successfully.")
+            messages.success(request, "Stock received successfully. Supplier Receipt confirmation has been sent.")
             return _redirect_with_branch("stock-list", active_branch)
 
         except Exception as exc:
@@ -1100,10 +1354,13 @@ def supplier_reorder_response_view(request, token):
                 continue
 
             can_supply = request.POST.get(f"can_supply_{req_id}") == "yes"
-            try:
-                quantity = int(request.POST.get(f"quantity_{req_id}") or 0)
-            except ValueError:
-                quantity = 0
+            quantity = None
+            quantity_raw = (request.POST.get(f"quantity_{req_id}") or "").strip()
+            if quantity_raw:
+                try:
+                    quantity = int(quantity_raw)
+                except ValueError:
+                    quantity = None
 
             with transaction.atomic():
                 locked_req = (
@@ -1130,7 +1387,12 @@ def supplier_reorder_response_view(request, token):
                     continue
 
                 effective_max = min(locked_req.requested_quantity, reorder.remaining_quantity)
-                quantity = min(quantity, effective_max) if can_supply else 0
+                if can_supply:
+                    if quantity is None or quantity <= 0:
+                        quantity = effective_max
+                    quantity = min(max(quantity, 0), effective_max)
+                else:
+                    quantity = 0
 
                 if not can_supply or quantity <= 0:
                     locked_req.status = SupplierReorderRequest.STATUS_REJECTED

@@ -55,6 +55,7 @@ class AutoReorderRequestAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "product",
+        "origin",
         "requested_quantity",
         "remaining_quantity",
         "target_stock_level",
@@ -62,7 +63,7 @@ class AutoReorderRequestAdmin(admin.ModelAdmin):
         "created_at",
         "completed_at",
     )
-    list_filter = ("status", "created_at")
+    list_filter = ("origin", "status", "created_at")
     search_fields = ("product__name", "product__barcode")
     ordering = ("-created_at",)
 

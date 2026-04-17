@@ -7,7 +7,7 @@ from decimal import Decimal
 from django.views.decorators.http import require_GET
 from branches.models import Branch
 from sales.models import Sale, Shift
-from products.models import Purchase, Supplier
+from products.models import AutoReorderRequest, Purchase, Supplier
 
 
 def _can_select_report_branch(user):
@@ -45,6 +45,38 @@ def _report_date_inputs(request):
     start_date = (request.GET.get("start_date") or today_iso).strip()
     end_date = (request.GET.get("end_date") or today_iso).strip()
     return start_date, end_date
+
+
+def _normalized_branch_requirements(branch_requirements):
+    if not isinstance(branch_requirements, dict):
+        return []
+
+    payload = []
+    for branch_name, qty in branch_requirements.items():
+        try:
+            normalized_qty = max(int(qty), 0)
+        except (TypeError, ValueError):
+            normalized_qty = 0
+        if normalized_qty > 0:
+            payload.append((str(branch_name), normalized_qty))
+
+    payload.sort(key=lambda item: item[0].lower())
+    return payload
+
+
+def _order_matches_branch(order, branch):
+    if not branch:
+        return True
+
+    branch_requirements = order.branch_requirements or {}
+    if not isinstance(branch_requirements, dict):
+        return False
+
+    try:
+        branch_qty = int(branch_requirements.get(branch.name, 0))
+    except (TypeError, ValueError):
+        branch_qty = 0
+    return branch_qty > 0
 
 
 @login_required
@@ -266,6 +298,108 @@ def shift_report_view(request):
     if request.htmx:
         return render(request, "reports/partials/_shift_table.html", ctx)
     return render(request, "reports/shift_report.html", ctx)
+
+
+@login_required
+def orders_report_view(request):
+    data = None
+    errors = None
+    start_date, end_date = _report_date_inputs(request)
+    branch_ctx = _report_branch_context(request)
+    active_branch = branch_ctx["active_branch"]
+
+    origin = (request.GET.get("origin") or "all").strip().lower()
+    status = (request.GET.get("status") or "all").strip().lower()
+
+    origin_options = [
+        ("all", "All Types"),
+        (AutoReorderRequest.ORIGIN_MANUAL, "Manual"),
+        (AutoReorderRequest.ORIGIN_AUTO, "Automatic"),
+    ]
+    status_options = [("all", "All Statuses"), *AutoReorderRequest.STATUS_CHOICES]
+
+    valid_origins = {item[0] for item in origin_options}
+    valid_statuses = {item[0] for item in status_options}
+    if origin not in valid_origins:
+        origin = "all"
+    if status not in valid_statuses:
+        status = "all"
+
+    try:
+        sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+        ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+        qs = (
+            AutoReorderRequest.objects.filter(created_at__date__gte=sd, created_at__date__lte=ed)
+            .select_related("product")
+            .prefetch_related("supplier_requests__supplier")
+            .order_by("-created_at")
+        )
+
+        if origin != "all":
+            qs = qs.filter(origin=origin)
+        if status != "all":
+            qs = qs.filter(status=status)
+
+        orders = list(qs)
+        if active_branch:
+            orders = [order for order in orders if _order_matches_branch(order, active_branch)]
+
+        rows = []
+        for order in orders:
+            supplier_requests = list(order.supplier_requests.all())
+            latest_supplier_request = supplier_requests[-1] if supplier_requests else None
+            requested_packets = int(order.requested_quantity or 0)
+            remaining_packets = int(order.remaining_quantity or 0)
+            fulfilled_packets = max(requested_packets - remaining_packets, 0)
+            received_packets = sum(int(item.received_quantity or 0) for item in supplier_requests)
+
+            rows.append(
+                {
+                    "id": order.id,
+                    "created_at": timezone.localtime(order.created_at),
+                    "product_name": order.product.name,
+                    "origin_display": dict(AutoReorderRequest.ORIGIN_CHOICES).get(order.origin, order.origin),
+                    "status_display": order.get_status_display(),
+                    "requested_packets": requested_packets,
+                    "remaining_packets": remaining_packets,
+                    "fulfilled_packets": fulfilled_packets,
+                    "received_packets": received_packets,
+                    "branch_breakdown": _normalized_branch_requirements(order.branch_requirements or {}),
+                    "supplier_requests_count": len(supplier_requests),
+                    "latest_supplier_name": latest_supplier_request.supplier.name if latest_supplier_request else "-",
+                    "latest_supplier_status": latest_supplier_request.get_status_display() if latest_supplier_request else "-",
+                }
+            )
+
+        data = {
+            "summary": {
+                "total_orders": len(rows),
+                "requested_packets": sum(row["requested_packets"] for row in rows),
+                "remaining_packets": sum(row["remaining_packets"] for row in rows),
+                "open_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_OPEN),
+                "fulfilled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_FULFILLED),
+                "exhausted_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_EXHAUSTED),
+                "cancelled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_CANCELLED),
+            },
+            "orders": rows,
+        }
+    except ValueError:
+        errors = "Invalid date format."
+
+    ctx = {
+        "data": data,
+        "errors": errors,
+        "start_date": start_date,
+        "end_date": end_date,
+        "origin": origin,
+        "status": status,
+        "origin_options": origin_options,
+        "status_options": status_options,
+        **branch_ctx,
+    }
+    if request.htmx:
+        return render(request, "reports/partials/_orders_table.html", ctx)
+    return render(request, "reports/orders_report.html", ctx)
 
 
 @login_required
