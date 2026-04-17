@@ -55,6 +55,14 @@ class Product(models.Model):
 
 
 class AutoReorderRequest(models.Model):
+    ORIGIN_AUTO = "auto"
+    ORIGIN_MANUAL = "manual"
+
+    ORIGIN_CHOICES = [
+        (ORIGIN_AUTO, "Automatic"),
+        (ORIGIN_MANUAL, "Manual"),
+    ]
+
     STATUS_OPEN = "open"
     STATUS_FULFILLED = "fulfilled"
     STATUS_EXHAUSTED = "exhausted"
@@ -72,6 +80,7 @@ class AutoReorderRequest(models.Model):
     current_stock_snapshot = models.IntegerField()
     requested_quantity = models.PositiveIntegerField()
     remaining_quantity = models.PositiveIntegerField()
+    origin = models.CharField(max_length=12, choices=ORIGIN_CHOICES, default=ORIGIN_AUTO)
     branch_requirements = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
     admin_notified = models.BooleanField(default=False)
