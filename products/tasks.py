@@ -216,8 +216,8 @@ def _build_purchase_confirmation_pdf(purchase: Purchase) -> bytes:
         story.append(logo)
         story.append(Spacer(1, 4))
 
-    story.append(Paragraph("ZIADA POS", brand_style))
-    story.append(Paragraph("Supplier Stock Receipt Confirmation", subtitle_style))
+    story.append(Paragraph("ZIADAPHARMA", brand_style))
+    story.append(Paragraph("Purchase Order Receipt", subtitle_style))
     story.append(Spacer(1, 6))
     story.append(Paragraph(f"Supplier: {purchase.supplier.name}", styles["Normal"]))
     story.append(Paragraph(f"Invoice Number: {purchase.invoice_number}", styles["Normal"]))
@@ -469,71 +469,84 @@ def send_batched_exhaustion_alerts():
     if not admin_email:
         return {"status": "no_admin_email"}
 
-    with transaction.atomic():
-        exhausted_qs = AutoReorderRequest.objects.select_for_update().select_related("product").filter(
+    exhausted_requests = list(
+        AutoReorderRequest.objects.select_related("product")
+        .filter(
             status=AutoReorderRequest.STATUS_EXHAUSTED,
-            admin_notified=False
+            admin_notified=False,
         )
-        exhausted_requests = list(exhausted_qs)
+        .order_by("id")
+    )
+    if not exhausted_requests:
+        return {"status": "no_pending_alerts"}
 
-        if not exhausted_requests:
-            return {"status": "no_pending_alerts"}
+    content_parts = []
+    reorder_ids = []
+    for reorder in exhausted_requests:
+        supplier_responses = reorder.supplier_requests.select_related("supplier").order_by("created_at")
+        summary_lines = []
+        for sq in supplier_responses:
+            status_text = sq.get_status_display()
+            if sq.status == "expired":
+                status_text = "Ignored (Expired)"
+            elif sq.status in ["partial", "accepted"]:
+                status_text = f"{status_text} - Supplied: {sq.fulfilled_quantity} / {sq.requested_quantity}"
+            elif sq.status == "rejected":
+                status_text = "Rejected"
+            summary_lines.append(f"  - {sq.supplier.name}: {status_text}")
 
-        content_parts = []
-        for reorder in exhausted_requests:
-            supplier_responses = reorder.supplier_requests.select_related("supplier").order_by("created_at")
-            summary_lines = []
-            for sq in supplier_responses:
-                status_text = sq.get_status_display()
-                if sq.status == "expired":
-                    status_text = "Ignored (Expired)"
-                elif sq.status in ["partial", "accepted"]:
-                    status_text = f"{status_text} - Supplied: {sq.fulfilled_quantity} / {sq.requested_quantity}"
-                elif sq.status == "rejected":
-                    status_text = "Rejected"
-                summary_lines.append(f"  - {sq.supplier.name}: {status_text}")
-            
-            supplier_summary = "\n".join(summary_lines) if summary_lines else "  No suppliers were contacted."
-            branch_details = []
-            for b_name, b_qty in reorder.branch_requirements.items():
-                branch_details.append(f"  - {b_name}: {b_qty} packet(s)")
-            branch_summary = "\n".join(branch_details) if branch_details else "  None"
+        supplier_summary = "\n".join(summary_lines) if summary_lines else "  No suppliers were contacted."
+        branch_details = []
+        for b_name, b_qty in (reorder.branch_requirements or {}).items():
+            branch_details.append(f"  - {b_name}: {b_qty} packet(s)")
+        branch_summary = "\n".join(branch_details) if branch_details else "  None"
 
-            content_parts.append(
-                f"Product: {reorder.product.name}\n"
-                f"Reorder Request ID: {reorder.pk}\n"
-                f"Missing Quantity: {reorder.remaining_quantity} packet(s)\n"
-                f"Branch Breakdown:\n{branch_summary}\n"
-                f"Supplier Activity Log:\n{supplier_summary}\n"
-                f"{'-'*40}"
-            )
-
-            reorder.admin_notified = True
-            reorder.save(update_fields=["admin_notified", "updated_at"])
-
-    if content_parts:
-        admin_message = (
-            f"The following {len(content_parts)} products have exhausted all listed suppliers or failed to respond.\n"
-            "Manual intervention is now required.\n\n"
-            + "\n\n".join(content_parts)
+        content_parts.append(
+            f"Product: {reorder.product.name}\n"
+            f"Reorder Request ID: {reorder.pk}\n"
+            f"Missing Quantity: {reorder.remaining_quantity} packet(s)\n"
+            f"Branch Breakdown:\n{branch_summary}\n"
+            f"Supplier Activity Log:\n{supplier_summary}\n"
+            f"{'-'*40}"
         )
+        reorder_ids.append(reorder.id)
 
-        try:
-            send_mail(
-                subject=f"URGENT: Reorder Failed for {len(content_parts)} product(s)",
-                message=admin_message,
-                from_email=_mail_sender(),
-                recipient_list=[admin_email],
-                fail_silently=True,
-            )
-        except Exception:
-            logger.exception("Failed to send batched admin exhaustion alert")
+    admin_message = (
+        f"The following {len(content_parts)} products have exhausted all listed suppliers or failed to respond.\n"
+        "Manual intervention is now required.\n\n"
+        + "\n\n".join(content_parts)
+    )
 
-        send_sms_via_leopard(
+    try:
+        sent_count = send_mail(
+            subject=f"URGENT: Reorder Failed for {len(content_parts)} product(s)",
             message=admin_message,
-            destinations=_admin_phone_numbers(admin_email),
-            log_extra={"batch_alert": True},
+            from_email=_mail_sender(),
+            recipient_list=[admin_email],
+            fail_silently=False,
         )
+    except Exception:
+        logger.exception("Failed to send batched admin exhaustion alert email")
+        return {"status": "email_failed", "count": len(content_parts)}
+
+    if int(sent_count or 0) < 1:
+        logger.error(
+            "Admin exhaustion alert email was not delivered",
+            extra={"reorder_ids": reorder_ids, "admin_email": admin_email},
+        )
+        return {"status": "email_failed", "count": len(content_parts)}
+
+    send_sms_via_leopard(
+        message=admin_message,
+        destinations=_admin_phone_numbers(admin_email),
+        log_extra={"batch_alert": True},
+    )
+
+    AutoReorderRequest.objects.filter(
+        id__in=reorder_ids,
+        status=AutoReorderRequest.STATUS_EXHAUSTED,
+        admin_notified=False,
+    ).update(admin_notified=True, updated_at=timezone.now())
 
     return {"status": "alerts_sent", "count": len(content_parts)}
 
@@ -575,54 +588,66 @@ def expire_supplier_request(supplier_request_id: int):
 
 @shared_task
 def send_purchase_confirmation_to_supplier(purchase_id: int):
-    purchase = (
-        Purchase.objects.select_related("supplier", "branch", "created_by")
-        .prefetch_related("items__product")
-        .filter(pk=purchase_id)
-        .first()
-    )
-    if not purchase:
-        return {"status": "missing_purchase"}
-
-    supplier_email = (purchase.supplier.email or "").strip()
-    if not supplier_email:
-        return {"status": "missing_supplier_email", "purchase_id": purchase.id}
-
-    pdf_bytes = _build_purchase_confirmation_pdf(purchase)
-    filename = f"stock_confirmation_{_sanitize_filename_fragment(purchase.invoice_number)}.pdf"
-
-    body = (
-        f"Dear {purchase.supplier.contact_person or purchase.supplier.name},\n\n"
-        "Please find attached the stock receipt confirmation PDF for the received order.\n\n"
-        f"Invoice Number: {purchase.invoice_number}\n"
-        f"Branch: {purchase.branch.name}\n"
-        f"Total Amount: KES {purchase.total_amount:.2f}\n\n"
-        "Regards,\n"
-        "Pharmtech POS"
-    )
-
-    email = EmailMessage(
-        subject=f"Stock Receipt Confirmation - {purchase.invoice_number}",
-        body=body,
-        from_email=_mail_sender(),
-        to=[supplier_email],
-    )
-    email.attach(filename, pdf_bytes, "application/pdf")
-    email.send(fail_silently=False)
-
-    sms_outcome = _send_purchase_confirmation_sms_once(purchase)
-    sms_status = sms_outcome.get("status")
-    if sms_status == "sms_failed":
-        logger.warning(
-            "Immediate purchase confirmation SMS failed; queued retry task",
-            extra={
-                "purchase_id": purchase.id,
-                "reason": sms_outcome.get("reason"),
-                "sms_result": sms_outcome.get("sms_result"),
-            },
+    with transaction.atomic():
+        purchase = (
+            Purchase.objects.select_for_update()
+            .select_related("supplier", "branch", "created_by")
+            .prefetch_related("items__product")
+            .filter(pk=purchase_id)
+            .first()
         )
-        send_purchase_confirmation_sms.delay(purchase.id)
-        sms_status = "queued_retry"
+        if not purchase:
+            return {"status": "missing_purchase"}
+
+        if purchase.supplier_confirmation_emailed_at:
+            return {
+                "status": "already_sent",
+                "purchase_id": purchase.id,
+                "sent_at": purchase.supplier_confirmation_emailed_at.isoformat(),
+            }
+
+        supplier_email = (purchase.supplier.email or "").strip()
+        if not supplier_email:
+            return {"status": "missing_supplier_email", "purchase_id": purchase.id}
+
+        pdf_bytes = _build_purchase_confirmation_pdf(purchase)
+        filename = f"stock_confirmation_{_sanitize_filename_fragment(purchase.invoice_number)}.pdf"
+
+        body = (
+            f"Dear {purchase.supplier.contact_person or purchase.supplier.name},\n\n"
+            "Please find attached the stock receipt confirmation PDF for the received order.\n\n"
+            f"Invoice Number: {purchase.invoice_number}\n"
+            f"Branch: {purchase.branch.name}\n"
+            f"Total Amount: KES {purchase.total_amount:.2f}\n\n"
+            "Regards,\n"
+            "Pharmtech POS"
+        )
+
+        email = EmailMessage(
+            subject=f"Stock Receipt Confirmation - {purchase.invoice_number}",
+            body=body,
+            from_email=_mail_sender(),
+            to=[supplier_email],
+        )
+        email.attach(filename, pdf_bytes, "application/pdf")
+        email.send(fail_silently=False)
+
+        purchase.supplier_confirmation_emailed_at = timezone.now()
+        purchase.save(update_fields=["supplier_confirmation_emailed_at"])
+
+        sms_outcome = _send_purchase_confirmation_sms_once(purchase)
+        sms_status = sms_outcome.get("status")
+        if sms_status == "sms_failed":
+            logger.warning(
+                "Immediate purchase confirmation SMS failed; queued retry task",
+                extra={
+                    "purchase_id": purchase.id,
+                    "reason": sms_outcome.get("reason"),
+                    "sms_result": sms_outcome.get("sms_result"),
+                },
+            )
+            send_purchase_confirmation_sms.delay(purchase.id)
+            sms_status = "queued_retry"
 
     return {"status": "sent", "purchase_id": purchase.id, "sms_status": sms_status}
 
@@ -651,7 +676,4 @@ def send_purchase_confirmation_sms(self, purchase_id: int):
         },
     )
     retry_delay_seconds = min(300, 60 * (2 ** max(self.request.retries, 0)))
-    raise self.retry(
-        exc=RuntimeError(f"Purchase confirmation SMS failed for purchase_id={purchase.id}"),
-        countdown=retry_delay_seconds,
-    )
+    raise self.retry(countdown=retry_delay_seconds)
