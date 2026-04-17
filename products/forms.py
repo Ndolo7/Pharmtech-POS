@@ -3,6 +3,7 @@ from django import forms
 from branches.models import Branch
 
 from .models import Category, Product, Supplier
+from .sms import normalize_phone_number
 
 
 class ProductForm(forms.ModelForm):
@@ -47,10 +48,17 @@ class SupplierForm(forms.ModelForm):
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-input"}),
             "contact_person": forms.TextInput(attrs={"class": "form-input"}),
-            "phone_number": forms.TextInput(attrs={"class": "form-input"}),
+            "phone_number": forms.TextInput(attrs={"class": "form-input", "placeholder": "07XXXXXXXX or 2547XXXXXXXX"}),
             "email": forms.EmailInput(attrs={"class": "form-input", "required": True}),
             "address": forms.Textarea(attrs={"class": "form-textarea", "rows": 2}),
         }
+
+    def clean_phone_number(self):
+        raw_phone = self.cleaned_data.get("phone_number")
+        normalized = normalize_phone_number(raw_phone)
+        if not normalized:
+            raise forms.ValidationError("Enter a valid Kenyan mobile number.")
+        return normalized
 
 
 class SupplierReorderResponseForm(forms.Form):
