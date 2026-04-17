@@ -1,50 +1,276 @@
 <div {% if request.htmx %}class="modal-backdrop"{% endif %} x-data {% if request.htmx %}@click.self="document.getElementById('modal-container').innerHTML=''"{% endif %}>
-  <div {% if request.htmx %}class="modal" style="max-width:500px"{% endif %}>
+  <div {% if request.htmx %}class="modal" style="max-width:760px"{% endif %}>
     <div class="{% if request.htmx %}modal-header{% else %}mb-4 border-b pb-2{% endif %}">
       <h3 {% if not request.htmx %}class="text-lg font-bold"{% endif %}>Create Manual Order</h3>
       {% if request.htmx %}<button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>{% endif %}
     </div>
     <div class="{% if request.htmx %}modal-body{% endif %}">
-      <form method="post"
+      <form
+        id="manual-order-form"
+        method="post"
         hx-post="{% url 'create-order' %}"
         hx-swap="none"
-        hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; }">
+        hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; }"
+      >
         {% csrf_token %}
-        <div class="form-group">
-          <label>Product *</label>
-          <select name="product_id" class="form-input search-select" required>
-            <option value="">Select product to order</option>
-            {% for p in products %}
-            <option value="{{ p.id }}">{{ p.name }}</option>
-            {% endfor %}
-          </select>
+        {% if not can_select_branch and active_branch %}
+        <div class="message message-info" style="margin-bottom:12px;max-width:none">
+          Ordering for branch: <strong>{{ active_branch.name }}</strong>
         </div>
-        {% if all_branches %}
-        <div class="form-group">
-          <label>Target Branch *</label>
-          <select name="branch_id" class="form-input" required>
-            <option value="">Select branch</option>
-            {% for b in all_branches %}
-              <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        {% else %}
-          {% if active_branch_id %}<input type="hidden" name="branch_id" value="{{ active_branch_id }}">{% endif %}
-          <div class="message message-info" style="margin-bottom:12px;max-width:none">
-            Ordering for branch: <strong>{{ active_branch.name }}</strong>
-          </div>
         {% endif %}
-        <div class="form-group">
-          <label>Packets to Order *</label>
-          <input type="number" name="packets" class="form-input" required min="1" placeholder="e.g. 5">
-          <span class="text-xs text-muted" style="display:block;margin-top:4px;">Amount is in supplier packet sizes, not individual units.</span>
+
+        <div id="manual-order-rows" data-can-select-branch="{% if can_select_branch %}1{% else %}0{% endif %}">
+          <div class="manual-order-row" style="border:1px solid var(--gray-200);border-radius:12px;padding:12px;margin-bottom:10px;">
+            <div style="display:grid;grid-template-columns:2.1fr {% if can_select_branch %}1.5fr {% endif %}1fr auto;gap:8px;align-items:end;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Product *</label>
+                <select name="product_id[]" class="form-input manual-order-product search-select" required>
+                  <option value="">Select product to order</option>
+                  {% for p in products %}
+                  <option
+                    value="{{ p.id }}"
+                    data-pack-qty="{{ p.pack_quantity|default:1 }}"
+                    data-max-stock="{{ p.max_stock }}"
+                    data-max-packets="{{ p.max_packets_allowed }}"
+                  >
+                    {{ p.name }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              {% if can_select_branch %}
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Branch *</label>
+                <select name="branch_id[]" class="form-input manual-order-branch" required>
+                  <option value="">Select branch</option>
+                  {% for b in all_branches %}
+                  <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% else %}
+              <input type="hidden" name="branch_id[]" value="{{ active_branch_id|default:'' }}">
+              {% endif %}
+
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Packets *</label>
+                <input type="number" name="packets[]" class="form-input manual-order-packets" required min="1" step="1" placeholder="e.g. 5">
+              </div>
+
+              <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
+                <button type="button" class="btn btn-outline manual-order-remove" style="white-space:nowrap;">Remove</button>
+              </div>
+            </div>
+            <div class="manual-order-helper text-xs text-muted" style="margin-top:6px;"></div>
+            <div class="manual-order-error text-xs text-danger" style="margin-top:4px;display:none;"></div>
+          </div>
         </div>
+
+        <button type="button" id="manual-order-add-row" class="btn btn-secondary" style="margin-top:4px;margin-bottom:12px;">
+          Add Product
+        </button>
+
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Order</button>
+          <button type="submit" id="manual-order-submit" class="btn btn-primary">Create Order</button>
         </div>
       </form>
     </div>
   </div>
 </div>
+
+<script id="manual-order-capacity-data" type="application/json">{{ manual_order_capacity_json|safe }}</script>
+
+<script>
+(function() {
+  const form = document.getElementById("manual-order-form");
+  if (!form) return;
+
+  const rowsContainer = document.getElementById("manual-order-rows");
+  const addButton = document.getElementById("manual-order-add-row");
+  const submitButton = document.getElementById("manual-order-submit");
+  const canSelectBranch = rowsContainer?.dataset.canSelectBranch === "1";
+  const capacityDataNode = document.getElementById("manual-order-capacity-data");
+  const firstRow = rowsContainer?.querySelector(".manual-order-row");
+  const manualOrderRowTemplate = firstRow ? firstRow.outerHTML : "";
+  let capacityData = {};
+
+  try {
+    capacityData = capacityDataNode ? JSON.parse(capacityDataNode.textContent || "{}") : {};
+  } catch (error) {
+    capacityData = {};
+  }
+
+  function parseIntSafe(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function updateRemoveButtons() {
+    const rows = rowsContainer.querySelectorAll(".manual-order-row");
+    rows.forEach((row, index) => {
+      const removeBtn = row.querySelector(".manual-order-remove");
+      if (!removeBtn) return;
+      const shouldDisable = rows.length === 1;
+      removeBtn.disabled = shouldDisable;
+      removeBtn.style.visibility = shouldDisable ? "hidden" : "visible";
+      removeBtn.dataset.rowIndex = String(index);
+    });
+  }
+
+  function resolveBranchId(row, branchSelect) {
+    if (canSelectBranch) {
+      return branchSelect?.value || "";
+    }
+    const hiddenBranch = row.querySelector('input[name="branch_id[]"]');
+    return hiddenBranch?.value || "";
+  }
+
+  function validateRows() {
+    const rows = rowsContainer.querySelectorAll(".manual-order-row");
+    if (!submitButton || !rows.length) return;
+
+    let allValid = true;
+
+    rows.forEach((row) => {
+      const productSelect = row.querySelector(".manual-order-product");
+      const branchSelect = row.querySelector(".manual-order-branch");
+      const packetsInput = row.querySelector(".manual-order-packets");
+      const helper = row.querySelector(".manual-order-helper");
+      const error = row.querySelector(".manual-order-error");
+
+      let rowValid = true;
+      let errorText = "";
+      let helperText = "";
+
+      const selectedOption = productSelect?.selectedOptions?.[0] || null;
+      const productId = productSelect?.value || "";
+      const branchId = resolveBranchId(row, branchSelect);
+      const branchCapacity = (capacityData[productId] && capacityData[productId][branchId]) ? capacityData[productId][branchId] : null;
+      const maxPackets = branchCapacity ? parseIntSafe(branchCapacity.max_packets) : (selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null);
+      const packQty = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-pack-qty")) : null;
+      const maxStock = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-stock")) : null;
+      const availableUnits = branchCapacity ? parseIntSafe(branchCapacity.available_units) : null;
+      const currentUnits = branchCapacity ? parseIntSafe(branchCapacity.current_units) : null;
+      const pendingUnits = branchCapacity ? parseIntSafe(branchCapacity.pending_units) : null;
+
+      if (!productSelect?.value) {
+        rowValid = false;
+        errorText = "Select a product.";
+      } else if (canSelectBranch && !branchSelect?.value) {
+        rowValid = false;
+        errorText = "Select a branch.";
+      } else if (!packetsInput?.value) {
+        rowValid = false;
+        errorText = "Enter packets to order.";
+      } else {
+        const packets = parseIntSafe(packetsInput.value);
+        if (!packets || packets <= 0) {
+          rowValid = false;
+          errorText = "Packets must be a positive whole number.";
+        } else if (maxPackets === null || packets > maxPackets) {
+          rowValid = false;
+          if (maxPackets !== null && currentUnits !== null && pendingUnits !== null && maxStock !== null) {
+            errorText = `Max additional allowed now: ${maxPackets} packet(s).`;
+          } else {
+            errorText = `Max additional allowed now: ${maxPackets || 0} packet(s).`;
+          }
+        }
+      }
+
+      if (packetsInput && maxPackets !== null) {
+        packetsInput.max = String(maxPackets);
+      }
+
+      if (maxPackets !== null && packQty && maxStock && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
+        helperText = `Needed: ${maxPackets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
+      } else if (maxPackets !== null && packQty && maxStock) {
+        helperText = `Max ${maxPackets} packet(s) allowed (max stock ${maxStock} units, ${packQty} unit(s)/packet).`;
+      } else {
+        helperText = "Amount is in supplier packet sizes, not individual units.";
+      }
+
+      if (!rowValid) {
+        allValid = false;
+        if (error) {
+          error.textContent = errorText;
+          error.style.display = "block";
+        }
+        if (packetsInput) {
+          packetsInput.style.borderColor = "var(--danger)";
+        }
+      } else {
+        if (error) {
+          error.textContent = "";
+          error.style.display = "none";
+        }
+        if (packetsInput) {
+          packetsInput.style.borderColor = "";
+        }
+      }
+
+      if (helper) {
+        helper.textContent = helperText;
+      }
+    });
+
+    submitButton.disabled = !allValid;
+  }
+
+  function cloneRow() {
+    if (!manualOrderRowTemplate) return;
+    const holder = document.createElement("div");
+    holder.innerHTML = manualOrderRowTemplate.trim();
+    const clone = holder.firstElementChild;
+    if (!clone) return;
+
+    clone.querySelectorAll("input, select").forEach((field) => {
+      if (field.tagName === "SELECT") {
+        field.selectedIndex = 0;
+      } else if (field.type === "hidden") {
+        return;
+      } else {
+        field.value = "";
+      }
+    });
+
+    const error = clone.querySelector(".manual-order-error");
+    if (error) {
+      error.textContent = "";
+      error.style.display = "none";
+    }
+
+    const helper = clone.querySelector(".manual-order-helper");
+    if (helper) {
+      helper.textContent = "";
+    }
+
+    rowsContainer.appendChild(clone);
+    if (typeof initTomSelect === "function") initTomSelect(clone);
+    updateRemoveButtons();
+    validateRows();
+  }
+
+  addButton?.addEventListener("click", cloneRow);
+
+  form.addEventListener("click", (event) => {
+    const removeButton = event.target.closest(".manual-order-remove");
+    if (!removeButton) return;
+    const row = removeButton.closest(".manual-order-row");
+    if (!row) return;
+    const rowCount = rowsContainer.querySelectorAll(".manual-order-row").length;
+    if (rowCount <= 1) return;
+    row.remove();
+    updateRemoveButtons();
+    validateRows();
+  });
+
+  form.addEventListener("input", validateRows);
+  form.addEventListener("change", validateRows);
+
+  if (typeof initTomSelect === "function") initTomSelect(rowsContainer);
+  updateRemoveButtons();
+  validateRows();
+})();
+</script>
