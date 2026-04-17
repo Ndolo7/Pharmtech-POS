@@ -1,0 +1,71 @@
+{% if errors %}
+  <div class="message message-error">{{ errors }}</div>
+{% elif data is not None %}
+  <div class="stats-grid" style="margin-bottom:16px">
+    <div class="stat-card blue">
+      <div class="label">Total Orders</div>
+      <div class="value">{{ data.summary.total_orders }}</div>
+      <div class="text-muted text-sm mt-1">Requested: {{ data.summary.requested_packets }} packets</div>
+    </div>
+    <div class="stat-card yellow">
+      <div class="label">Open</div>
+      <div class="value">{{ data.summary.open_count }}</div>
+      <div class="text-muted text-sm mt-1">Remaining: {{ data.summary.remaining_packets }} packets</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Fulfilled</div>
+      <div class="value">{{ data.summary.fulfilled_count }}</div>
+      <div class="text-muted text-sm mt-1">Exhausted: {{ data.summary.exhausted_count }} · Cancelled: {{ data.summary.cancelled_count }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Date</th>
+            <th>Product</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Requested</th>
+            <th>Remaining</th>
+            <th>Received</th>
+            <th>Branches</th>
+            <th>Supplier Trail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in data.orders %}
+          <tr>
+            <td>ORD-{{ row.id }}</td>
+            <td>{{ row.created_at|date:"d M Y H:i" }}</td>
+            <td>{{ row.product_name }}</td>
+            <td>{{ row.origin_display }}</td>
+            <td>{{ row.status_display }}</td>
+            <td>{{ row.requested_packets }}</td>
+            <td>{{ row.remaining_packets }}</td>
+            <td>{{ row.received_packets }}</td>
+            <td>
+              {% if row.branch_breakdown %}
+                {% for b_name, b_qty in row.branch_breakdown %}
+                <div>{{ b_name }}: {{ b_qty }}</div>
+                {% endfor %}
+              {% else %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+            <td>
+              <div>{{ row.supplier_requests_count }} attempt{{ row.supplier_requests_count|pluralize }}</div>
+              <div class="text-muted text-sm">{{ row.latest_supplier_name }} · {{ row.latest_supplier_status }}</div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="10" class="empty-state">No orders found for the selected criteria.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
