@@ -1,4 +1,5 @@
 import uuid
+from datetime import time
 
 from django.contrib.auth import get_user_model
 from django.db import models
@@ -93,6 +94,27 @@ class AutoReorderRequest(models.Model):
 
     def __str__(self):
         return f"Reorder #{self.pk} {self.product.name} ({self.status})"
+
+
+class AutoOrderScheduleSetting(models.Model):
+    use_daily_run_time = models.BooleanField(
+        default=False,
+        help_text="When enabled, auto stock checks run once daily at the selected time.",
+    )
+    daily_run_time = models.TimeField(
+        default=time(8, 0),
+        help_text="Daily run time (Africa/Nairobi) used when daily override is enabled.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Auto Order Schedule Setting"
+        verbose_name_plural = "Auto Order Schedule Setting"
+
+    def __str__(self):
+        mode = "Daily" if self.use_daily_run_time else "Interval"
+        return f"Auto order schedule ({mode})"
 
 
 class SupplierReorderRequest(models.Model):

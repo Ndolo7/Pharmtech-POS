@@ -118,7 +118,9 @@ celery -A pos_system beat -l info
 ```
 
 Scheduled task:
-- `products.tasks.scan_low_stock_and_trigger_reorders` runs every `AUTO_ORDER_CHECK_INTERVAL_MINUTES`.
+- `products.tasks.scan_low_stock_and_trigger_reorders` is managed in `Django Admin -> Products -> Auto Order Schedule Setting`.
+- If `Use daily run time` is enabled, it runs once daily at the selected time (for example `08:00`).
+- If daily override is disabled, it falls back to `AUTO_ORDER_CHECK_INTERVAL_MINUTES`.
 
 ## Core URL Areas
 - `/accounts/` login, profile, users

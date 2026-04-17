@@ -1,6 +1,9 @@
 from django.contrib import admin
+from django.shortcuts import redirect
+from django.urls import reverse
 
 from .models import (
+    AutoOrderScheduleSetting,
     AutoReorderRequest,
     Category,
     Product,
@@ -13,6 +16,7 @@ from .models import (
     Transfer,
     TransferItem,
 )
+from .scheduling import sync_auto_order_periodic_task
 
 
 @admin.register(Category)
@@ -27,6 +31,29 @@ class SupplierAdmin(admin.ModelAdmin):
     list_display = ("name", "contact_person", "phone_number", "email", "created_at")
     search_fields = ("name", "contact_person", "phone_number", "email")
     ordering = ("name",)
+
+
+@admin.register(AutoOrderScheduleSetting)
+class AutoOrderScheduleSettingAdmin(admin.ModelAdmin):
+    list_display = ("use_daily_run_time", "daily_run_time", "updated_at")
+    fields = ("use_daily_run_time", "daily_run_time", "updated_at")
+    readonly_fields = ("updated_at",)
+
+    def has_add_permission(self, request):
+        return not AutoOrderScheduleSetting.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        existing = AutoOrderScheduleSetting.objects.order_by("id").first()
+        if existing:
+            return redirect(reverse("admin:products_autoorderschedulesetting_change", args=[existing.pk]))
+        return redirect(reverse("admin:products_autoorderschedulesetting_add"))
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        sync_auto_order_periodic_task(obj)
 
 
 

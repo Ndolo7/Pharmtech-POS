@@ -1,15 +1,18 @@
 from decimal import Decimal
-from datetime import timedelta
+from datetime import time as dt_time, timedelta
 from unittest.mock import patch
 
 from celery.exceptions import Retry
+from django.conf import settings
 from django.urls import reverse
 from django.test import TestCase
 from django.utils import timezone
+from django_celery_beat.models import PeriodicTask
 
 from accounts.models import User
 from branches.models import Branch
 from products.models import (
+    AutoOrderScheduleSetting,
     AutoReorderRequest,
     Purchase,
     PurchaseItem,
@@ -18,6 +21,7 @@ from products.models import (
     Supplier,
     SupplierReorderRequest,
 )
+from products.scheduling import AUTO_ORDER_PERIODIC_TASK_NAME, sync_auto_order_periodic_task
 from products.tasks import (
     scan_low_stock_and_trigger_reorders,
     send_purchase_confirmation_sms,
@@ -122,6 +126,45 @@ class AutoReorderScanTests(TestCase):
             origin=AutoReorderRequest.ORIGIN_AUTO,
         )
         self.assertEqual(auto_reorder.branch_requirements, {"Wendani": 5, "Sukari": 5})
+
+
+class AutoOrderScheduleSyncTests(TestCase):
+    def setUp(self):
+        AutoOrderScheduleSetting.objects.all().delete()
+
+    def test_sync_uses_interval_schedule_when_daily_override_is_disabled(self):
+        setting = AutoOrderScheduleSetting.objects.create(
+            use_daily_run_time=False,
+            daily_run_time=dt_time(8, 0),
+        )
+
+        periodic_task = sync_auto_order_periodic_task(setting)
+        periodic_task.refresh_from_db()
+
+        expected_minutes = max(int(getattr(settings, "AUTO_ORDER_CHECK_INTERVAL_MINUTES", 15) or 15), 1)
+        self.assertEqual(periodic_task.name, AUTO_ORDER_PERIODIC_TASK_NAME)
+        self.assertIsNotNone(periodic_task.interval)
+        self.assertEqual(periodic_task.interval.every, expected_minutes)
+        self.assertEqual(periodic_task.interval.period, "minutes")
+        self.assertIsNone(periodic_task.crontab)
+
+    def test_sync_uses_daily_crontab_when_daily_override_is_enabled(self):
+        setting = AutoOrderScheduleSetting.objects.create(
+            use_daily_run_time=True,
+            daily_run_time=dt_time(8, 0),
+        )
+
+        periodic_task = sync_auto_order_periodic_task(setting)
+        periodic_task.refresh_from_db()
+
+        self.assertIsNotNone(periodic_task.crontab)
+        self.assertIsNone(periodic_task.interval)
+        self.assertEqual(periodic_task.crontab.hour, "8")
+        self.assertEqual(periodic_task.crontab.minute, "0")
+        self.assertEqual(str(periodic_task.crontab.timezone), settings.TIME_ZONE)
+        self.assertTrue(
+            PeriodicTask.objects.filter(name=AUTO_ORDER_PERIODIC_TASK_NAME, task="products.tasks.scan_low_stock_and_trigger_reorders").exists()
+        )
 
 
 class SupplierReorderResponseViewTests(TestCase):
