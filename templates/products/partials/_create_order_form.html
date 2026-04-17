@@ -93,7 +93,7 @@
   const canSelectBranch = rowsContainer?.dataset.canSelectBranch === "1";
   const capacityDataNode = document.getElementById("manual-order-capacity-data");
   const firstRow = rowsContainer?.querySelector(".manual-order-row");
-  const manualOrderRowTemplate = firstRow ? firstRow.outerHTML : "";
+  const manualOrderRowTemplate = firstRow ? firstRow.cloneNode(true) : null;
   let capacityData = {};
 
   try {
@@ -105,6 +105,25 @@
   function parseIntSafe(value) {
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function normalizeSearchSelects(row) {
+    if (!row) return;
+
+    row.querySelectorAll(".ts-wrapper").forEach((wrapper) => {
+      const underlyingSelect = wrapper.querySelector("select");
+      if (underlyingSelect) {
+        wrapper.replaceWith(underlyingSelect);
+      } else {
+        wrapper.remove();
+      }
+    });
+
+    row.querySelectorAll("select.search-select").forEach((selectEl) => {
+      selectEl.classList.remove("tomselected", "ts-hidden-accessible");
+      selectEl.removeAttribute("tabindex");
+      selectEl.removeAttribute("style");
+    });
   }
 
   function updateRemoveButtons() {
@@ -220,10 +239,10 @@
 
   function cloneRow() {
     if (!manualOrderRowTemplate) return;
-    const holder = document.createElement("div");
-    holder.innerHTML = manualOrderRowTemplate.trim();
-    const clone = holder.firstElementChild;
+    const clone = manualOrderRowTemplate.cloneNode(true);
     if (!clone) return;
+
+    normalizeSearchSelects(clone);
 
     clone.querySelectorAll("input, select").forEach((field) => {
       if (field.tagName === "SELECT") {

@@ -76,6 +76,44 @@ def _normalized_branch_requirements(branch_requirements):
     return payload
 
 
+def _build_branch_groups(branch_product_map):
+    groups = []
+    for branch_name in sorted(branch_product_map.keys(), key=lambda value: value.lower()):
+        branch_items = sorted(
+            branch_product_map[branch_name],
+            key=lambda item: item["product_name"].lower(),
+        )
+        groups.append(
+            {
+                "name": branch_name,
+                "items": branch_items,
+                "total_packets": sum(item["quantity"] for item in branch_items),
+            }
+        )
+    return groups
+
+
+def _allocate_confirmed_branch_quantities(branch_requirements, confirmed_quantity):
+    remaining = _to_non_negative_int(confirmed_quantity)
+    if remaining <= 0:
+        return []
+
+    allocations = []
+    for branch_name, requested_qty in _normalized_branch_requirements(branch_requirements):
+        if remaining <= 0:
+            break
+        allocated_qty = min(requested_qty, remaining)
+        if allocated_qty <= 0:
+            continue
+        allocations.append((branch_name, allocated_qty))
+        remaining -= allocated_qty
+
+    if remaining > 0:
+        allocations.append(("Unspecified Branch", remaining))
+
+    return allocations
+
+
 def _max_packets_allowed_for_product(product):
     pack_quantity = max(int(product.pack_quantity or 1), 1)
     max_stock_units = max(int(product.max_stock or 1), 1)
@@ -1331,20 +1369,11 @@ def supplier_reorder_response_view(request, token):
                 }
             )
 
-    branch_groups = []
-    for branch_name in sorted(branch_product_map.keys(), key=lambda value: value.lower()):
-        branch_items = branch_product_map[branch_name]
-        branch_groups.append(
-            {
-                "name": branch_name,
-                "items": branch_items,
-                "total_packets": sum(item["quantity"] for item in branch_items),
-            }
-        )
+    branch_groups = _build_branch_groups(branch_product_map)
 
     if request.method == "POST":
         should_escalate_ids = []
-        feedback_messages = []
+        confirmed_branch_product_map = {}
 
         request_ids = request.POST.getlist("request_id")
         for req_id_str in request_ids:
@@ -1401,7 +1430,6 @@ def supplier_reorder_response_view(request, token):
                     locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
                     if reorder.remaining_quantity > 0:
                         should_escalate_ids.append(reorder.id)
-                    feedback_messages.append(f"{locked_req.reorder_request.product.name}: We will contact the next supplier.")
                 else:
                     locked_req.fulfilled_quantity = quantity
                     if quantity < locked_req.requested_quantity:
@@ -1419,12 +1447,21 @@ def supplier_reorder_response_view(request, token):
 
                     if reorder.remaining_quantity > 0:
                         should_escalate_ids.append(reorder.id)
-                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Will contact next supplier for {reorder.remaining_quantity}.")
-                    else:
-                        feedback_messages.append(f"{locked_req.reorder_request.product.name}: Accepted {quantity}. Request fulfilled.")
+                    for branch_name, branch_qty in _allocate_confirmed_branch_quantities(
+                        reorder.branch_requirements or {},
+                        quantity,
+                    ):
+                        confirmed_branch_product_map.setdefault(branch_name, []).append(
+                            {
+                                "product_name": locked_req.reorder_request.product.name,
+                                "quantity": branch_qty,
+                            }
+                        )
 
         for esc_id in set(should_escalate_ids):
             notify_next_supplier.delay(esc_id)
+
+        confirmed_branch_groups = _build_branch_groups(confirmed_branch_product_map)
 
         return render(
             request,
@@ -1434,7 +1471,9 @@ def supplier_reorder_response_view(request, token):
                 "can_respond": False,
                 "message_type": "success",
                 "message": "Feedback received successfully. Thank you for your response.",
-                "branch_groups": [],
+                "branch_groups": confirmed_branch_groups,
+                "branch_summary_title": "Confirmed Supply Summary",
+                "branch_summary_subtitle": "Products you confirmed to supply, grouped by branch",
                 "pending_count": 0,
             },
         )
@@ -1447,6 +1486,8 @@ def supplier_reorder_response_view(request, token):
             "pending_requests": pending_requests,
             "can_respond": bool(pending_requests),
             "branch_groups": branch_groups,
+            "branch_summary_title": "Branch Summary",
+            "branch_summary_subtitle": "All needed products grouped by branch",
             "pending_count": len(pending_requests),
         },
     )
