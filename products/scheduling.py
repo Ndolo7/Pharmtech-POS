@@ -6,6 +6,7 @@ from .models import AutoOrderScheduleSetting
 
 AUTO_ORDER_SCAN_TASK = "products.tasks.scan_low_stock_and_trigger_reorders"
 AUTO_ORDER_PERIODIC_TASK_NAME = "scan-low-stock-and-trigger-reorders"
+AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME = "scan-low-stock-and-trigger-reorders-sunday-11am"
 
 
 def _interval_minutes() -> int:
@@ -66,5 +67,27 @@ def sync_auto_order_periodic_task(config: AutoOrderScheduleSetting | None = None
     periodic_task, _ = PeriodicTask.objects.update_or_create(
         name=AUTO_ORDER_PERIODIC_TASK_NAME,
         defaults=defaults,
+    )
+
+    # Always keep a dedicated Sunday 11:00 schedule for supplier weekly reviews.
+    sunday_schedule, _ = CrontabSchedule.objects.get_or_create(
+        minute="0",
+        hour="11",
+        day_of_week="0",
+        day_of_month="*",
+        month_of_year="*",
+        timezone=getattr(settings, "TIME_ZONE", "UTC"),
+    )
+    PeriodicTask.objects.update_or_create(
+        name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME,
+        defaults={
+            "task": AUTO_ORDER_SCAN_TASK,
+            "enabled": True,
+            "one_off": False,
+            "crontab": sunday_schedule,
+            "interval": None,
+            "solar": None,
+            "clocked": None,
+        },
     )
     return periodic_task
