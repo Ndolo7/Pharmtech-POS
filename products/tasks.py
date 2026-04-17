@@ -1,17 +1,21 @@
 import logging
+import re
 from datetime import timedelta
+from io import BytesIO
 from math import ceil
+from pathlib import Path
 
 from celery import shared_task
 from branches.models import Branch
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage, send_mail
 from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
+from PIL import Image, ImageDraw
 
-from .models import AutoReorderRequest, Product, Supplier, SupplierReorderRequest
+from .models import AutoReorderRequest, Product, Purchase, Supplier, SupplierReorderRequest
 from .sms import normalize_phone_numbers, send_sms_via_leopard
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,212 @@ def _packets_needed(deficit_units: int, pack_quantity: int) -> int:
     return int(ceil(safe_deficit / float(safe_pack_quantity)))
 
 
+def _sanitize_filename_fragment(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value or "").strip("_") or "purchase"
+
+
+def _svg_path_to_points(path_data: str) -> list[tuple[float, float]]:
+    tokens = [token for token in re.findall(r"[MLHVZ]|-?\d+(?:\.\d+)?", path_data or "") if token]
+    points: list[tuple[float, float]] = []
+    idx = 0
+    command = None
+    current_x = 0.0
+    current_y = 0.0
+
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in {"M", "L", "H", "V", "Z"}:
+            command = token
+            idx += 1
+            if command == "Z":
+                break
+            continue
+
+        if command in {"M", "L"}:
+            if idx + 1 >= len(tokens):
+                break
+            current_x = float(tokens[idx])
+            current_y = float(tokens[idx + 1])
+            points.append((current_x, current_y))
+            idx += 2
+            continue
+
+        if command == "H":
+            current_x = float(tokens[idx])
+            points.append((current_x, current_y))
+            idx += 1
+            continue
+
+        if command == "V":
+            current_y = float(tokens[idx])
+            points.append((current_x, current_y))
+            idx += 1
+            continue
+
+        idx += 1
+
+    return points
+
+
+def _ziada_logo_png_bytes() -> bytes:
+    logo_svg_path = Path(settings.BASE_DIR) / "static" / "branding" / "logo.svg"
+    if not logo_svg_path.exists():
+        return b""
+
+    try:
+        content = logo_svg_path.read_text(encoding="utf-8")
+    except Exception:
+        logger.exception("Unable to read logo SVG for purchase confirmation PDF", extra={"path": str(logo_svg_path)})
+        return b""
+
+    width_match = re.search(r'width="([\d.]+)"', content)
+    height_match = re.search(r'height="([\d.]+)"', content)
+    canvas_width = int(float(width_match.group(1))) if width_match else 544
+    canvas_height = int(float(height_match.group(1))) if height_match else 542
+
+    path_matches = re.findall(r'<path[^>]*d="([^"]+)"[^>]*fill="([^"]+)"', content)
+    if not path_matches:
+        return b""
+
+    image = Image.new("RGBA", (canvas_width, canvas_height), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image, "RGBA")
+
+    for path_data, fill in path_matches:
+        points = _svg_path_to_points(path_data)
+        if len(points) < 3:
+            continue
+        draw.polygon(points, fill=fill)
+
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _purchase_confirmation_sms_text(purchase: Purchase) -> str:
+    return (
+        f"Stock receipt for invoice {purchase.invoice_number} has been confirmed. "
+        f"A PDF confirmation has been emailed to {purchase.supplier.email}."
+    )
+
+
+def _send_purchase_confirmation_sms_once(purchase: Purchase) -> dict:
+    sms_result = send_sms_via_leopard(
+        message=_purchase_confirmation_sms_text(purchase),
+        destinations=purchase.supplier.phone_number,
+        log_extra={"purchase_id": purchase.id, "event": "stock_receipt_confirmation"},
+    )
+    if sms_result.get("success"):
+        return {"status": "sms_sent", "purchase_id": purchase.id}
+
+    reason = str(sms_result.get("reason") or "").strip()
+    if reason in {"not_configured", "no_recipients"}:
+        logger.warning(
+            "Purchase confirmation SMS skipped",
+            extra={"purchase_id": purchase.id, "reason": reason},
+        )
+        return {"status": "sms_skipped", "purchase_id": purchase.id, "reason": reason}
+
+    return {
+        "status": "sms_failed",
+        "purchase_id": purchase.id,
+        "reason": reason or "provider_unsuccessful_response",
+        "sms_result": sms_result,
+    }
+
+
+def _build_purchase_confirmation_pdf(purchase: Purchase) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image as RLImage
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+    )
+    styles = getSampleStyleSheet()
+    brand_style = ParagraphStyle(
+        "BrandHeading",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=20,
+        textColor=colors.HexColor("#1E3A8A"),
+        spaceAfter=2,
+    )
+    subtitle_style = ParagraphStyle(
+        "ReceiptSubtitle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=13,
+        textColor=colors.HexColor("#334155"),
+    )
+    story = []
+
+    logo_bytes = _ziada_logo_png_bytes()
+    if logo_bytes:
+        logo = RLImage(BytesIO(logo_bytes), width=28 * mm, height=28 * mm)
+        logo.hAlign = "LEFT"
+        story.append(logo)
+        story.append(Spacer(1, 4))
+
+    story.append(Paragraph("ZIADA POS", brand_style))
+    story.append(Paragraph("Supplier Stock Receipt Confirmation", subtitle_style))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(f"Supplier: {purchase.supplier.name}", styles["Normal"]))
+    story.append(Paragraph(f"Invoice Number: {purchase.invoice_number}", styles["Normal"]))
+    story.append(Paragraph(f"Branch: {purchase.branch.name}", styles["Normal"]))
+    story.append(
+        Paragraph(
+            f"Received At: {timezone.localtime(purchase.created_at).strftime('%Y-%m-%d %H:%M:%S')}",
+            styles["Normal"],
+        )
+    )
+    story.append(Spacer(1, 12))
+
+    rows = [["Product", "Quantity (Units)", "Unit Cost", "Line Total"]]
+    for item in purchase.items.select_related("product").all():
+        rows.append(
+            [
+                item.product.name,
+                str(item.quantity),
+                f"KES {item.unit_cost:.2f}",
+                f"KES {item.total_cost:.2f}",
+            ]
+        )
+
+    rows.append(["", "", "Grand Total", f"KES {purchase.total_amount:.2f}"])
+
+    table = Table(rows, colWidths=[80 * mm, 30 * mm, 32 * mm, 32 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EFF6FF")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+            ]
+        )
+    )
+    story.append(table)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 @shared_task
 def scan_low_stock_and_trigger_reorders():
     now = timezone.now()
@@ -92,7 +302,11 @@ def scan_low_stock_and_trigger_reorders():
         with transaction.atomic():
             existing = (
                 AutoReorderRequest.objects.select_for_update()
-                .filter(product=product, status=AutoReorderRequest.STATUS_OPEN)
+                .filter(
+                    product=product,
+                    status=AutoReorderRequest.STATUS_OPEN,
+                    origin=AutoReorderRequest.ORIGIN_AUTO,
+                )
                 .order_by("-created_at")
                 .first()
             )
@@ -132,6 +346,7 @@ def scan_low_stock_and_trigger_reorders():
                     current_stock_snapshot=current_stock,
                     requested_quantity=required_quantity,
                     remaining_quantity=required_quantity,
+                    origin=AutoReorderRequest.ORIGIN_AUTO,
                     branch_requirements=branch_requirements,
                     status=AutoReorderRequest.STATUS_OPEN,
                 )
@@ -356,3 +571,87 @@ def expire_supplier_request(supplier_request_id: int):
         notify_next_supplier.delay(reorder_id)
 
     return {"status": "expired", "supplier_request_id": supplier_request_id}
+
+
+@shared_task
+def send_purchase_confirmation_to_supplier(purchase_id: int):
+    purchase = (
+        Purchase.objects.select_related("supplier", "branch", "created_by")
+        .prefetch_related("items__product")
+        .filter(pk=purchase_id)
+        .first()
+    )
+    if not purchase:
+        return {"status": "missing_purchase"}
+
+    supplier_email = (purchase.supplier.email or "").strip()
+    if not supplier_email:
+        return {"status": "missing_supplier_email", "purchase_id": purchase.id}
+
+    pdf_bytes = _build_purchase_confirmation_pdf(purchase)
+    filename = f"stock_confirmation_{_sanitize_filename_fragment(purchase.invoice_number)}.pdf"
+
+    body = (
+        f"Dear {purchase.supplier.contact_person or purchase.supplier.name},\n\n"
+        "Please find attached the stock receipt confirmation PDF for the received order.\n\n"
+        f"Invoice Number: {purchase.invoice_number}\n"
+        f"Branch: {purchase.branch.name}\n"
+        f"Total Amount: KES {purchase.total_amount:.2f}\n\n"
+        "Regards,\n"
+        "Pharmtech POS"
+    )
+
+    email = EmailMessage(
+        subject=f"Stock Receipt Confirmation - {purchase.invoice_number}",
+        body=body,
+        from_email=_mail_sender(),
+        to=[supplier_email],
+    )
+    email.attach(filename, pdf_bytes, "application/pdf")
+    email.send(fail_silently=False)
+
+    sms_outcome = _send_purchase_confirmation_sms_once(purchase)
+    sms_status = sms_outcome.get("status")
+    if sms_status == "sms_failed":
+        logger.warning(
+            "Immediate purchase confirmation SMS failed; queued retry task",
+            extra={
+                "purchase_id": purchase.id,
+                "reason": sms_outcome.get("reason"),
+                "sms_result": sms_outcome.get("sms_result"),
+            },
+        )
+        send_purchase_confirmation_sms.delay(purchase.id)
+        sms_status = "queued_retry"
+
+    return {"status": "sent", "purchase_id": purchase.id, "sms_status": sms_status}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_purchase_confirmation_sms(self, purchase_id: int):
+    purchase = (
+        Purchase.objects.select_related("supplier")
+        .filter(pk=purchase_id)
+        .first()
+    )
+    if not purchase:
+        return {"status": "missing_purchase"}
+
+    sms_outcome = _send_purchase_confirmation_sms_once(purchase)
+    if sms_outcome.get("status") in {"sms_sent", "sms_skipped"}:
+        return sms_outcome
+
+    logger.warning(
+        "Purchase confirmation SMS failed; scheduling retry",
+        extra={
+            "purchase_id": purchase.id,
+            "reason": sms_outcome.get("reason"),
+            "retries": self.request.retries,
+            "sms_result": sms_outcome.get("sms_result"),
+        },
+    )
+    retry_delay_seconds = min(300, 60 * (2 ** max(self.request.retries, 0)))
+    raise self.retry(
+        exc=RuntimeError(f"Purchase confirmation SMS failed for purchase_id={purchase.id}"),
+        countdown=retry_delay_seconds,
+    )
