@@ -154,7 +154,7 @@
                 <div id="supply-details-{{ req.id }}" class="conditional-group">
                   <div class="form-group mb-0">
                     <label>Quantity You Can Supply (in packets, max {{ req.requested_quantity }})</label>
-                    <input type="number" name="quantity_{{ req.id }}" class="form-input" min="0" max="{{ req.requested_quantity }}" placeholder="Max {{ req.requested_quantity }}">
+                    <input type="number" name="quantity_{{ req.id }}" class="form-input" min="1" max="{{ req.requested_quantity }}" value="{{ req.requested_quantity }}" placeholder="Max {{ req.requested_quantity }}">
                   </div>
                 </div>
               </div>
