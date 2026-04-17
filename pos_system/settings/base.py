@@ -132,10 +132,6 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
-CELERY_BEAT_SCHEDULE = {
-    "scan-low-stock-and-trigger-reorders": {
-        "task": "products.tasks.scan_low_stock_and_trigger_reorders",
-        "schedule": float(AUTO_ORDER_CHECK_INTERVAL_MINUTES * 60),
-    },
-}
+# Celery Beat schedules are managed in django-celery-beat tables.
+CELERY_BEAT_SCHEDULE = {}
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
