@@ -146,6 +146,48 @@ def _purchase_confirmation_sms_text(purchase: Purchase) -> str:
     )
 
 
+def _supplier_reorder_response_link(supplier_request: SupplierReorderRequest) -> str:
+    response_path = reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
+    return f"{_site_base_url()}{response_path}"
+
+
+def _supplier_reorder_message_text(supplier_request: SupplierReorderRequest, response_link: str) -> str:
+    return (
+        f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
+        "Please confirm your available quantity (in PACKETS) to supply using this secure link (valid for 1 hour):\n"
+        f"{response_link}\n\n"
+    )
+
+
+def _send_supplier_reorder_sms_once(supplier_request: SupplierReorderRequest, message: str | None = None) -> dict:
+    sms_body = message or _supplier_reorder_message_text(
+        supplier_request,
+        _supplier_reorder_response_link(supplier_request),
+    )
+    sms_result = send_sms_via_leopard(
+        message=sms_body,
+        destinations=supplier_request.supplier.phone_number,
+        log_extra={"supplier_request_id": supplier_request.id, "event": "supplier_reorder_notification"},
+    )
+    if sms_result.get("success"):
+        return {"status": "sms_sent", "supplier_request_id": supplier_request.id}
+
+    reason = str(sms_result.get("reason") or "").strip()
+    if reason in {"not_configured", "no_recipients"}:
+        logger.warning(
+            "Reorder request SMS skipped",
+            extra={"supplier_request_id": supplier_request.id, "reason": reason},
+        )
+        return {"status": "sms_skipped", "supplier_request_id": supplier_request.id, "reason": reason}
+
+    return {
+        "status": "sms_failed",
+        "supplier_request_id": supplier_request.id,
+        "reason": reason or "provider_unsuccessful_response",
+        "sms_result": sms_result,
+    }
+
+
 def _send_purchase_confirmation_sms_once(purchase: Purchase) -> dict:
     sms_result = send_sms_via_leopard(
         message=_purchase_confirmation_sms_text(purchase),
@@ -423,14 +465,8 @@ def notify_next_supplier(reorder_request_id: int):
             expires_at=expires_at,
         )
 
-    response_path = reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
-    response_link = f"{_site_base_url()}{response_path}"
-
-    message = (
-        f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
-        f"Please confirm your available quantity (in PACKETS) to supply using this secure link (valid for 1 hour):\n"
-        f"{response_link}\n\n"
-    )
+    response_link = _supplier_reorder_response_link(supplier_request)
+    message = _supplier_reorder_message_text(supplier_request, response_link)
 
     try:
         send_mail(
@@ -452,15 +488,23 @@ def notify_next_supplier(reorder_request_id: int):
         notify_next_supplier.delay(reorder_request_id)
         return {"status": "email_failed", "supplier_request_id": supplier_request.id}
 
-    send_sms_via_leopard(
-        message=message,
-        destinations=supplier_request.supplier.phone_number,
-        log_extra={"supplier_request_id": supplier_request.id},
-    )
+    sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
+    sms_status = sms_outcome.get("status")
+    if sms_status == "sms_failed":
+        logger.warning(
+            "Immediate reorder request SMS failed; queued retry task",
+            extra={
+                "supplier_request_id": supplier_request.id,
+                "reason": sms_outcome.get("reason"),
+                "sms_result": sms_outcome.get("sms_result"),
+            },
+        )
+        send_supplier_reorder_sms.delay(supplier_request.id)
+        sms_status = "queued_retry"
 
     SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
     expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
-    return {"status": "email_sent", "supplier_request_id": supplier_request.id}
+    return {"status": "email_sent", "supplier_request_id": supplier_request.id, "sms_status": sms_status}
 
 
 @shared_task
@@ -584,6 +628,41 @@ def expire_supplier_request(supplier_request_id: int):
         notify_next_supplier.delay(reorder_id)
 
     return {"status": "expired", "supplier_request_id": supplier_request_id}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_supplier_reorder_sms(self, supplier_request_id: int):
+    supplier_request = (
+        SupplierReorderRequest.objects.select_related("supplier")
+        .filter(pk=supplier_request_id)
+        .first()
+    )
+    if not supplier_request:
+        return {"status": "missing_supplier_request"}
+    if supplier_request.status != SupplierReorderRequest.STATUS_PENDING:
+        return {
+            "status": "inactive",
+            "supplier_request_id": supplier_request.id,
+            "supplier_request_status": supplier_request.status,
+        }
+    if timezone.now() > supplier_request.expires_at:
+        return {"status": "expired", "supplier_request_id": supplier_request.id}
+
+    sms_outcome = _send_supplier_reorder_sms_once(supplier_request)
+    if sms_outcome.get("status") in {"sms_sent", "sms_skipped"}:
+        return sms_outcome
+
+    logger.warning(
+        "Reorder request SMS failed; scheduling retry",
+        extra={
+            "supplier_request_id": supplier_request.id,
+            "reason": sms_outcome.get("reason"),
+            "retries": self.request.retries,
+            "sms_result": sms_outcome.get("sms_result"),
+        },
+    )
+    retry_delay_seconds = min(300, 60 * (2 ** max(self.request.retries, 0)))
+    raise self.retry(countdown=retry_delay_seconds)
 
 
 @shared_task

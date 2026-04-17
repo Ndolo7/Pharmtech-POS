@@ -1,7 +1,7 @@
 services:
   web:
     image: ghcr.io/ndolo7/pharmtech-pos:latest
-    command: gunicorn pos_system.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 4
+    command: gunicorn pos_system.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 4 --access-logfile - --access-logformat '"%(r)s" %(s)s %(B)s' --error-logfile - --capture-output --log-level info
     restart: always
     volumes:
       - static_volume:/app/staticfiles
@@ -12,6 +12,11 @@ services:
     depends_on:
       - db
       - redis
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   db:
     image: postgres:16-alpine
