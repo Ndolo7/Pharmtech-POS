@@ -114,6 +114,39 @@ def _allocate_confirmed_branch_quantities(branch_requirements, confirmed_quantit
     return allocations
 
 
+def _confirmed_branch_groups_for_supplier_request(supplier_request):
+    confirmed_qty = _to_non_negative_int(supplier_request.fulfilled_quantity)
+    if confirmed_qty <= 0:
+        return []
+
+    branch_product_map = {}
+    for branch_name, branch_qty in _allocate_confirmed_branch_quantities(
+        supplier_request.reorder_request.branch_requirements or {},
+        confirmed_qty,
+    ):
+        branch_product_map.setdefault(branch_name, []).append(
+            {
+                "product_name": supplier_request.reorder_request.product.name,
+                "quantity": branch_qty,
+            }
+        )
+    return _build_branch_groups(branch_product_map)
+
+
+def _used_supplier_link_message(supplier_request):
+    if supplier_request.status in {
+        SupplierReorderRequest.STATUS_ACCEPTED,
+        SupplierReorderRequest.STATUS_PARTIAL,
+        SupplierReorderRequest.STATUS_REJECTED,
+    }:
+        return "warning", "This confirmation link has already been used. It is now read-only for your records."
+    if supplier_request.status == SupplierReorderRequest.STATUS_EXPIRED:
+        return "warning", "This confirmation link has expired and can no longer accept responses."
+    if supplier_request.status == SupplierReorderRequest.STATUS_EMAIL_FAILED:
+        return "error", "This request failed to send correctly. Please contact our procurement team."
+    return "info", "This confirmation link is no longer active."
+
+
 def _max_packets_allowed_for_product(product):
     pack_quantity = max(int(product.pack_quantity or 1), 1)
     max_stock_units = max(int(product.max_stock or 1), 1)
@@ -1322,7 +1355,7 @@ def category_edit_view(request, pk):
 
 def supplier_reorder_response_view(request, token):
     primary_request = get_object_or_404(
-        SupplierReorderRequest.objects.select_related("supplier"),
+        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product"),
         token=token,
     )
     supplier = primary_request.supplier
@@ -1370,6 +1403,39 @@ def supplier_reorder_response_view(request, token):
             )
 
     branch_groups = _build_branch_groups(branch_product_map)
+    primary_request.refresh_from_db()
+    primary_request_is_live = (
+        primary_request.status == SupplierReorderRequest.STATUS_PENDING and primary_request.expires_at >= now
+    )
+
+    if not primary_request_is_live:
+        message_type, message = _used_supplier_link_message(primary_request)
+        used_branch_groups = _confirmed_branch_groups_for_supplier_request(primary_request)
+        reference_request = {
+            "product_name": primary_request.reorder_request.product.name,
+            "requested_quantity": primary_request.requested_quantity,
+            "fulfilled_quantity": primary_request.fulfilled_quantity,
+            "status_display": primary_request.get_status_display(),
+        }
+        return render(
+            request,
+            "products/supplier_reorder_response.html",
+            {
+                "supplier": supplier,
+                "can_respond": False,
+                "message_type": message_type,
+                "message": message,
+                "reference_request": reference_request,
+                "branch_groups": used_branch_groups,
+                "branch_summary_title": "Confirmed Supply Summary" if used_branch_groups else "Request Summary",
+                "branch_summary_subtitle": (
+                    "Products you confirmed to supply, grouped by branch"
+                    if used_branch_groups
+                    else "This request is closed and cannot be edited."
+                ),
+                "pending_count": 0,
+            },
+        )
 
     if request.method == "POST":
         should_escalate_ids = []
