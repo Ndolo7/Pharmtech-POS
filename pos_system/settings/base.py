@@ -10,11 +10,10 @@ def env_bool(name: str, default: bool = False) -> bool:
     value = str(config(name, default=str(default))).strip().lower()
     return value in {"1", "true", "t", "yes", "y", "on"}
 
-
 SECRET_KEY = config("SECRET_KEY", default="django-insecure-change-me-in-production")
 DEBUG = False
-ALLOWED_HOSTS = config("ALLOWED_HOSTS",cast=Csv(),)
-CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS",cast=Csv(),)
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://127.0.0.1:8000", cast=Csv())
 
 INSTALLED_APPS = [
     "django.contrib.admin",
