@@ -67,7 +67,6 @@
         </div>
         
         <div class="supplier-body">
-        <div class="supplier-body">
           <div class="supplier-meta">
             <div class="meta-item">
               <div class="meta-label">Supplier</div>
@@ -93,26 +92,27 @@
             </div>
           {% endif %}
 
-          {% if can_respond %}
-            {% if branch_groups %}
-              <div class="product-reorder-block" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px;margin-bottom:20px;">
-                <div class="meta-item mb-4" style="margin-bottom:12px">
-                  <div class="meta-label">Branch Summary</div>
-                  <div class="meta-value">All needed products grouped by branch</div>
-                </div>
-                {% for branch_group in branch_groups %}
-                  <div class="meta-item mb-4" style="margin-bottom:12px">
-                    <div class="meta-label">{{ branch_group.name }}</div>
-                    <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
-                      {% for item in branch_group.items %}
-                        <div>&bull; {{ item.product_name }}: {{ item.quantity }} packet(s)</div>
-                      {% endfor %}
-                      <div style="margin-top:6px; font-weight:700;">Total: {{ branch_group.total_packets }} packet(s)</div>
-                    </div>
-                  </div>
-                {% endfor %}
+          {% if branch_groups %}
+            <div class="product-reorder-block" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px;margin-bottom:20px;">
+              <div class="meta-item mb-4" style="margin-bottom:12px">
+                <div class="meta-label">{{ branch_summary_title|default:"Branch Summary" }}</div>
+                <div class="meta-value">{{ branch_summary_subtitle|default:"All needed products grouped by branch" }}</div>
               </div>
-            {% endif %}
+              {% for branch_group in branch_groups %}
+                <div class="meta-item mb-4" style="margin-bottom:12px">
+                  <div class="meta-label">{{ branch_group.name }}</div>
+                  <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
+                    {% for item in branch_group.items %}
+                      <div>&bull; {{ item.product_name }}: {{ item.quantity }} packet(s)</div>
+                    {% endfor %}
+                    <div style="margin-top:6px; font-weight:700;">Total: {{ branch_group.total_packets }} packet(s)</div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% if can_respond %}
 
             <form method="post">
               {% csrf_token %}
