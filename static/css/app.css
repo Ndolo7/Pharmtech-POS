@@ -95,6 +95,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  text-decoration: none;
+  color: inherit;
 }
 .sidebar-brand-mark {
   width: 40px;
