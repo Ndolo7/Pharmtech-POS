@@ -92,6 +92,27 @@
             </div>
           {% endif %}
 
+          {% if reference_request %}
+            <div class="product-reorder-block" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:20px;">
+              <div class="meta-item mb-4" style="margin-bottom:12px">
+                <div class="meta-label">Product Name</div>
+                <div class="meta-value">{{ reference_request.product_name }}</div>
+              </div>
+              <div class="meta-item mb-4" style="margin-bottom:12px">
+                <div class="meta-label">Original Requested Qty</div>
+                <div class="meta-value">{{ reference_request.requested_quantity }} packet(s)</div>
+              </div>
+              <div class="meta-item mb-4" style="margin-bottom:12px">
+                <div class="meta-label">Your Confirmed Qty</div>
+                <div class="meta-value">{{ reference_request.fulfilled_quantity }} packet(s)</div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">Current Status</div>
+                <div class="meta-value">{{ reference_request.status_display }}</div>
+              </div>
+            </div>
+          {% endif %}
+
           {% if branch_groups %}
             <div class="product-reorder-block" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:20px;margin-bottom:20px;">
               <div class="meta-item mb-4" style="margin-bottom:12px">
