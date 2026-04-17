@@ -21,9 +21,14 @@ from products.models import (
     Supplier,
     SupplierReorderRequest,
 )
-from products.scheduling import AUTO_ORDER_PERIODIC_TASK_NAME, sync_auto_order_periodic_task
+from products.scheduling import (
+    AUTO_ORDER_PERIODIC_TASK_NAME,
+    AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME,
+    sync_auto_order_periodic_task,
+)
 from products.tasks import (
     scan_low_stock_and_trigger_reorders,
+    send_batched_exhaustion_alerts,
     send_purchase_confirmation_sms,
     send_purchase_confirmation_to_supplier,
 )
@@ -147,6 +152,11 @@ class AutoOrderScheduleSyncTests(TestCase):
         self.assertEqual(periodic_task.interval.every, expected_minutes)
         self.assertEqual(periodic_task.interval.period, "minutes")
         self.assertIsNone(periodic_task.crontab)
+        sunday_task = PeriodicTask.objects.get(name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME)
+        self.assertIsNotNone(sunday_task.crontab)
+        self.assertEqual(sunday_task.crontab.hour, "11")
+        self.assertEqual(sunday_task.crontab.minute, "0")
+        self.assertEqual(sunday_task.crontab.day_of_week, "0")
 
     def test_sync_uses_daily_crontab_when_daily_override_is_enabled(self):
         setting = AutoOrderScheduleSetting.objects.create(
@@ -165,6 +175,10 @@ class AutoOrderScheduleSyncTests(TestCase):
         self.assertTrue(
             PeriodicTask.objects.filter(name=AUTO_ORDER_PERIODIC_TASK_NAME, task="products.tasks.scan_low_stock_and_trigger_reorders").exists()
         )
+        sunday_task = PeriodicTask.objects.get(name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME)
+        self.assertEqual(sunday_task.crontab.hour, "11")
+        self.assertEqual(sunday_task.crontab.minute, "0")
+        self.assertEqual(sunday_task.crontab.day_of_week, "0")
 
 
 class SupplierReorderResponseViewTests(TestCase):
@@ -349,9 +363,124 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertContains(response, "Feedback received successfully. Thank you for your response.")
         self.assertContains(response, "Confirmed Supply Summary")
         self.assertContains(response, "Wendani")
-        self.assertContains(response, "Confirmed Branch Item: 5 packet(s)")
+        self.assertContains(response, "Confirmed Branch Item: 3 packet(s)")
         self.assertContains(response, "Sukari")
-        self.assertContains(response, "Confirmed Branch Item: 1 packet(s)")
+        self.assertContains(response, "Confirmed Branch Item: 3 packet(s)")
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_used_link_still_shows_confirmed_product_in_read_only_mode(self, _notify_delay):
+        now = timezone.now()
+        product = Product.objects.create(
+            name="Confirmed Reference Item",
+            barcode="TEST-CONFIRM-READONLY-001",
+            unit_price=Decimal("12.00"),
+            cost_price=Decimal("6.00"),
+            reorder_level=10,
+            max_stock=100,
+            pack_quantity=1,
+            is_active=True,
+        )
+        reorder = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=8,
+            remaining_quantity=8,
+            branch_requirements={"Wendani": 5, "Sukari": 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=8,
+            expires_at=now + timedelta(hours=1),
+        )
+
+        self.client.post(
+            reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
+            data={
+                "request_id": [str(supplier_request.id)],
+                f"can_supply_{supplier_request.id}": "yes",
+                f"quantity_{supplier_request.id}": "6",
+            },
+        )
+        revisit_response = self.client.get(
+            reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
+        )
+
+        self.assertEqual(revisit_response.status_code, 200)
+        self.assertContains(revisit_response, "already been used")
+        self.assertContains(revisit_response, "Confirmed Reference Item")
+        self.assertContains(revisit_response, "Current Status")
+        self.assertContains(revisit_response, "Partial")
+        self.assertContains(revisit_response, "Confirmed Supply Summary")
+        self.assertNotContains(revisit_response, "Confirm Submission")
+
+
+class ExhaustionAlertTaskTests(TestCase):
+    def setUp(self):
+        self.supplier = Supplier.objects.create(
+            name="Alert Supplier",
+            contact_person="Alert User",
+            phone_number="254700000123",
+            email="alert-supplier@example.com",
+            address="Nairobi",
+            priority=1,
+        )
+        self.product = Product.objects.create(
+            name="Alert Product",
+            barcode="ALERT-PROD-001",
+            unit_price=Decimal("20.00"),
+            cost_price=Decimal("10.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=5,
+            is_active=True,
+        )
+        self.reorder = AutoReorderRequest.objects.create(
+            product=self.product,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=10,
+            remaining_quantity=10,
+            branch_requirements={"Wendani": 6, "Sukari": 4},
+            status=AutoReorderRequest.STATUS_EXHAUSTED,
+            admin_notified=False,
+        )
+        SupplierReorderRequest.objects.create(
+            reorder_request=self.reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=10,
+            fulfilled_quantity=0,
+            status=SupplierReorderRequest.STATUS_EXPIRED,
+            expires_at=timezone.now() - timedelta(hours=2),
+            responded_at=timezone.now() - timedelta(hours=1),
+        )
+
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_alert_email_success_marks_orders_notified(self, send_mail_mock, send_sms_mock):
+        send_mail_mock.return_value = 1
+        result = send_batched_exhaustion_alerts()
+
+        self.assertEqual(result["status"], "alerts_sent")
+        self.reorder.refresh_from_db()
+        self.assertTrue(self.reorder.admin_notified)
+        send_mail_mock.assert_called_once()
+        send_sms_mock.assert_called_once()
+
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_alert_email_failure_does_not_mark_orders_notified(self, send_mail_mock, send_sms_mock):
+        send_mail_mock.side_effect = RuntimeError("smtp unavailable")
+        result = send_batched_exhaustion_alerts()
+
+        self.assertEqual(result["status"], "email_failed")
+        self.reorder.refresh_from_db()
+        self.assertFalse(self.reorder.admin_notified)
+        send_sms_mock.assert_not_called()
 
 
 class ManualOrderCreateViewTests(TestCase):
@@ -756,6 +885,24 @@ class PurchaseConfirmationTaskTests(TestCase):
         self.assertEqual(result["sms_status"], "queued_retry")
         email_cls.assert_called_once()
         queue_sms_task.assert_called_once_with(self.purchase.id)
+
+    @patch("products.tasks.send_purchase_confirmation_sms.delay")
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.EmailMessage")
+    def test_send_purchase_confirmation_is_idempotent_for_duplicate_task_runs(
+        self, email_cls, sms_send, queue_sms_task
+    ):
+        sms_send.return_value = {"success": True, "response": {"ok": True}}
+        first = send_purchase_confirmation_to_supplier(self.purchase.id)
+        second = send_purchase_confirmation_to_supplier(self.purchase.id)
+
+        self.assertEqual(first["status"], "sent")
+        self.assertEqual(second["status"], "already_sent")
+        email_cls.return_value.send.assert_called_once_with(fail_silently=False)
+        sms_send.assert_called_once()
+        queue_sms_task.assert_not_called()
+        self.purchase.refresh_from_db()
+        self.assertIsNotNone(self.purchase.supplier_confirmation_emailed_at)
 
     @patch("products.tasks.send_sms_via_leopard")
     def test_send_purchase_confirmation_sms_sends_to_supplier(self, sms_send):
