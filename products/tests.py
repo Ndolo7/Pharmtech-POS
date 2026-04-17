@@ -306,6 +306,53 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertEqual(reorder.remaining_quantity, 0)
         self.assertEqual(reorder.status, AutoReorderRequest.STATUS_FULFILLED)
 
+    @patch("products.views.notify_next_supplier.delay")
+    def test_success_page_shows_confirmed_products_grouped_by_branch(self, _notify_delay):
+        now = timezone.now()
+        product = Product.objects.create(
+            name="Confirmed Branch Item",
+            barcode="TEST-CONFIRM-002",
+            unit_price=Decimal("12.00"),
+            cost_price=Decimal("6.00"),
+            reorder_level=10,
+            max_stock=100,
+            pack_quantity=1,
+            is_active=True,
+        )
+        reorder = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=8,
+            remaining_quantity=8,
+            branch_requirements={"Wendani": 5, "Sukari": 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=8,
+            expires_at=now + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
+            data={
+                "request_id": [str(supplier_request.id)],
+                f"can_supply_{supplier_request.id}": "yes",
+                f"quantity_{supplier_request.id}": "6",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Feedback received successfully. Thank you for your response.")
+        self.assertContains(response, "Confirmed Supply Summary")
+        self.assertContains(response, "Wendani")
+        self.assertContains(response, "Confirmed Branch Item: 5 packet(s)")
+        self.assertContains(response, "Sukari")
+        self.assertContains(response, "Confirmed Branch Item: 1 packet(s)")
+
 
 class ManualOrderCreateViewTests(TestCase):
     def setUp(self):
