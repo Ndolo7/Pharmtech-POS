@@ -22,13 +22,13 @@ def normalize_phone_number(phone_number: str | None) -> str | None:
         return None
 
     if digits.startswith("254") and len(digits) == 12 and digits[3] in {"7", "1"}:
-        return digits
+        return f"+{digits}"
 
     if digits.startswith("0") and len(digits) == 10 and digits[1] in {"7", "1"}:
-        return f"254{digits[1:]}"
+        return f"+254{digits[1:]}"
 
     if len(digits) == 9 and digits[0] in {"7", "1"}:
-        return f"254{digits}"
+        return f"+254{digits}"
 
     return None
 
@@ -102,6 +102,28 @@ def _sms_provider_reason(payload: dict) -> str:
     return "provider_unsuccessful_response"
 
 
+def _sms_recipient_statuses(payload: dict) -> dict[str, str]:
+    """Extract per-recipient status codes from the provider response.
+
+    Returns a mapping of {number: status} for every entry in the
+    ``recipients`` list that carries a non-empty ``status`` field.
+    Useful for surfacing granular rejection reasons such as
+    ``restricted_send_time`` or ``invalid_number``.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    recipient_list = payload.get("recipients") or []
+    result: dict[str, str] = {}
+    for entry in recipient_list:
+        if not isinstance(entry, dict):
+            continue
+        number = str(entry.get("number") or "").strip()
+        status = str(entry.get("status") or "").strip()
+        if number and status:
+            result[number] = status
+    return result
+
+
 def send_sms_via_leopard(
     *,
     message: str,
@@ -151,14 +173,17 @@ def send_sms_via_leopard(
         if reason == "provider_unsuccessful_response":
             reason = str(exc.reason or "").strip() or f"http_{exc.code}"
 
+        recipient_statuses = _sms_recipient_statuses(payload)
         logger.warning(
-            "SMS Leopard request rejected (HTTP %s): %s",
+            "SMS Leopard request rejected (HTTP %s): %s%s",
             exc.code,
             reason,
+            f" | per-recipient statuses: {recipient_statuses}" if recipient_statuses else "",
             extra={
                 **(log_extra or {}),
                 "http_status": exc.code,
                 "reason": reason,
+                "recipient_statuses": recipient_statuses,
                 "sms_response": payload,
                 "sms_response_raw": error_body[:1000],
             },

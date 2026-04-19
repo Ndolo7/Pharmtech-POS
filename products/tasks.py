@@ -154,7 +154,7 @@ def _supplier_reorder_response_link(supplier_request: SupplierReorderRequest) ->
 def _supplier_reorder_message_text(supplier_request: SupplierReorderRequest, response_link: str) -> str:
     return (
         f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
-        "Please confirm your available quantity (in PACKETS) to supply using this secure link (valid for 1 hour):\n"
+        "Please click this link. Supply requested. What you do have, tick it. You must respond within 1 hour:\n"
         f"{response_link}\n\n"
     )
 
@@ -258,7 +258,7 @@ def _build_purchase_confirmation_pdf(purchase: Purchase) -> bytes:
         story.append(logo)
         story.append(Spacer(1, 4))
 
-    story.append(Paragraph("ZIADAPHARMA", brand_style))
+    story.append(Paragraph("Ziadapharma", brand_style))
     story.append(Paragraph("Purchase Order Receipt", subtitle_style))
     story.append(Spacer(1, 6))
     story.append(Paragraph(f"Supplier: {purchase.supplier.name}", styles["Normal"]))
@@ -470,7 +470,7 @@ def notify_next_supplier(reorder_request_id: int):
 
     try:
         send_mail(
-            subject=f"Reorder Request",
+            subject=f"Purchase Order",
             message=message,
             from_email=_mail_sender(),
             recipient_list=[supplier_request.supplier.email],
@@ -699,7 +699,7 @@ def send_purchase_confirmation_to_supplier(purchase_id: int):
             f"Branch: {purchase.branch.name}\n"
             f"Total Amount: KES {purchase.total_amount:.2f}\n\n"
             "Regards,\n"
-            "Pharmtech POS"
+            "ZiadaRx"
         )
 
         email = EmailMessage(
