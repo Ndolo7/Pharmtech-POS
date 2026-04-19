@@ -470,7 +470,7 @@ def notify_next_supplier(reorder_request_id: int):
 
     try:
         send_mail(
-            subject=f"Reorder Request",
+            subject=f"Purchase Order",
             message=message,
             from_email=_mail_sender(),
             recipient_list=[supplier_request.supplier.email],
@@ -699,7 +699,7 @@ def send_purchase_confirmation_to_supplier(purchase_id: int):
             f"Branch: {purchase.branch.name}\n"
             f"Total Amount: KES {purchase.total_amount:.2f}\n\n"
             "Regards,\n"
-            "Pharmtech POS"
+            "ZiadaRx"
         )
 
         email = EmailMessage(
