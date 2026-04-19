@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign In — ZIADA POS</title>
+  <title>Sign In — ZiadaRx</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="{% static 'branding/logo.svg' %}">
@@ -14,10 +14,15 @@
 <body>
   <div class="login-page">
     <div class="login-card">
-      <div class="login-logo">
-        <img src="{% static 'branding/logo.svg' %}" alt="ZIADA logo">
+      <div class="login-brand">
+        <div class="login-logo">
+          <img src="{% static 'branding/logo.svg' %}" alt="ZiadaRx logo">
+        </div>
+        <div class="login-brand-text">
+          <h1>ZiadaRx</h1>
+          <h4>Inventory Master</h4>
+        </div>
       </div>
-      <h1>ZIADA POS</h1>
       <p>Sign in to your account to continue</p>
 
       {% if messages %}
