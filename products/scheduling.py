@@ -72,7 +72,7 @@ def sync_auto_order_periodic_task(config: AutoOrderScheduleSetting | None = None
     # Always keep a dedicated Sunday 11:00 schedule for supplier weekly reviews.
     sunday_schedule, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
-        hour="11",
+        hour="13",
         day_of_week="0",
         day_of_month="*",
         month_of_year="*",
