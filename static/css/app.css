@@ -611,6 +611,12 @@ tbody tr:last-child td { border-bottom: none; }
 .login-card { background: #fff; border-radius: 12px; box-shadow: var(--shadow-lg); padding: 40px; width: 100%; max-width: 380px; }
 .login-card h1 { font-size: 22px; font-weight: 700; color: var(--gray-900); margin-bottom: 4px; }
 .login-card p  { color: var(--gray-400); font-size: 13px; margin-bottom: 28px; }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
 .login-logo {
   width: 64px;
   height: 64px;
@@ -618,7 +624,16 @@ tbody tr:last-child td { border-bottom: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+.login-brand-text h1 {
+  margin: 0;
+}
+.login-brand-text h4 {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gray-500);
 }
 .login-logo img {
   width: 64px;
