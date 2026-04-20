@@ -1402,6 +1402,8 @@ def supplier_reorder_response_view(request, token):
                 {
                     "product_name": pending_request.reorder_request.product.name,
                     "quantity": qty,
+                    "req_id": pending_request.id,
+                    "requested_quantity": pending_request.requested_quantity,
                 }
             )
 
