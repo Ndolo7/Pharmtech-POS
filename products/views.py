@@ -806,24 +806,27 @@ def receive_stock_view(request):
                         created_by=request.user,
                     )
 
-            if purchase_id_for_confirmation:
-                try:
-                    send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
-                except Exception:
-                    logger.exception(
-                        "Failed to queue supplier purchase confirmation task",
-                        extra={"purchase_id": purchase_id_for_confirmation},
-                    )
+            """
+            Uncomment the below lines to enable supplier purchase confirmation email
+            """
+            # if purchase_id_for_confirmation:
+            #     try:
+            #         send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
+            #     except Exception:
+            #         logger.exception(
+            #             "Failed to queue supplier purchase confirmation task",
+            #             extra={"purchase_id": purchase_id_for_confirmation},
+            #         )
 
             if request.htmx:
                 response = _rows_oob_response(request, changed_products, branch=active_branch)
                 return _with_hx_trigger(
                     response,
                     "stock-action-success",
-                    {"message": "Stock received successfully. Supplier Receipt confirmation has been sent."},
+                    {"message": "Stock received successfully."},
                 )
-            messages.success(request, "Stock received successfully. Supplier Receipt confirmation has been sent.")
-            return _redirect_with_branch("stock-list", active_branch)
+            # messages.success(request, "Stock received successfully. Supplier Receipt confirmation has been sent.")
+            # return _redirect_with_branch("stock-list", active_branch)
 
         except Exception as exc:
             messages.error(request, f"Error: {exc}")
