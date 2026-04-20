@@ -174,7 +174,8 @@
                 </div>
                 <div id="supply-details-{{ req.id }}" class="conditional-group">
                   <div class="form-group mb-0">
-                    <label>Quantity You Can Supply (in packets, max {{ req.requested_quantity }})</label>
+                    <label>Quantity You Can Supply (max {{ req.requested_quantity }} packet(s))</label>
+                    <label style="font-size: 12px; color: #6b7280;">If you have less quantities than requested, put here</label>
                     <input type="number" name="quantity_{{ req.id }}" class="form-input" min="1" max="{{ req.requested_quantity }}" value="{{ req.requested_quantity }}" placeholder="Max {{ req.requested_quantity }}">
                   </div>
                 </div>
@@ -187,7 +188,7 @@
               </button>
             </form>
           {% else %}
-            <p class="text-sm text-muted" style="text-align: center; margin-top: 30px;">If you believe this is an error, please contact our procurement team.</p>
+            <p class="text-sm text-muted" style="text-align: center; margin-top: 30px;">Ensure order is paid in full before delivery.</p>
           {% endif %}
         </div>
       </div>
