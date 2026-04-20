@@ -58,7 +58,7 @@ def user_list_view(request):
         messages.error(request, "Permission denied.")
         return redirect("/")
     
-    users = User.objects.select_related("branch").order_by("username")
+    users = User.objects.select_related("branch").filter(is_superuser=False).order_by("username")
     form = UserCreateForm()
     
     if request.htmx:
@@ -78,7 +78,7 @@ def user_create_view(request):
         if form.is_valid():
             form.save()
             messages.success(request, "User created successfully.")
-            users = User.objects.select_related("branch").order_by("username")
+            users = User.objects.select_related("branch").filter(is_superuser=False).order_by("username")
             return render(request, "accounts/partials/_user_table.html", {"users": users})
         return render(request, "accounts/partials/_user_form.html", {"form": form})
     
@@ -99,7 +99,7 @@ def user_edit_view(request, pk):
         if form.is_valid():
             form.save()
             messages.success(request, "User updated successfully.")
-            users = User.objects.select_related("branch").order_by("username")
+            users = User.objects.select_related("branch").filter(is_superuser=False).order_by("username")
             return render(request, "accounts/partials/_user_table.html", {"users": users})
         return render(request, "accounts/partials/_user_form.html", {"form": form, "editing": user})
     
