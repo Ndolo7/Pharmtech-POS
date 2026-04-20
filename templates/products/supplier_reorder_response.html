@@ -126,7 +126,6 @@
                     {% for item in branch_group.items %}
                       <div>&bull; {{ item.product_name }}: {{ item.quantity }} packet(s)</div>
                     {% endfor %}
-                    <div style="margin-top:6px; font-weight:700;">Total: {{ branch_group.total_packets }} packet(s)</div>
                   </div>
                 </div>
               {% endfor %}
@@ -138,47 +137,45 @@
             <form method="post">
               {% csrf_token %}
 
-              {% for req in pending_requests %}
+              {% for branch_group in branch_groups %}
               <div class="product-reorder-block" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:20px;">
-                <input type="hidden" name="request_id" value="{{ req.id }}">
-                <div class="meta-item mb-4" style="margin-bottom:12px">
-                  <div class="meta-label">Product Name</div>
-                  <div class="meta-value">{{ req.reorder_request.product.name }}</div>
+                <div class="meta-item mb-4" style="margin-bottom:16px">
+                  <div class="meta-label">Branch</div>
+                  <div class="meta-value">{{ branch_group.name }}</div>
                 </div>
-                <div class="meta-item mb-4" style="margin-bottom:12px">
-                  <div class="meta-label">Requested Qty</div>
-                  <div class="meta-value" style="color: var(--primary-dark); font-size: 16px;">{{ req.requested_quantity }} packet(s)</div>
-                </div>
-                {% if req.branch_breakdown %}
-                <div class="meta-item mb-4" style="grid-column: 1 / -1; margin-bottom:12px">
-                  <div class="meta-label">Branch Breakdown</div>
-                  <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
-                    {% for b_name, b_qty in req.branch_breakdown %}
-                      <div>&bull; {{ b_name }}: {{ b_qty }} packet(s)</div>
-                    {% endfor %}
+                {% for item in branch_group.items %}
+                <div style="border-top:1px solid #f1f5f9;padding-top:14px;margin-top:4px;">
+                  <input type="hidden" name="request_id" value="{{ item.req_id }}">
+                  <div class="meta-item mb-4" style="margin-bottom:12px">
+                    <div class="meta-label">Product</div>
+                    <div class="meta-value">{{ item.product_name }}</div>
                   </div>
-                </div>
-                {% endif %}
-                <div class="form-group mb-4" style="margin-bottom:12px">
-                  <label>Can you supply this product?</label>
-                  <div class="radio-group can-supply-group" data-req-id="{{ req.id }}">
-                    <div>
-                      <input type="radio" name="can_supply_{{ req.id }}" id="can_supply_yes_{{ req.id }}" value="yes" checked>
-                      <label class="radio-label" for="can_supply_yes_{{ req.id }}">Yes</label>
-                    </div>
-                    <div>
-                      <input type="radio" name="can_supply_{{ req.id }}" id="can_supply_no_{{ req.id }}" value="no">
-                      <label class="radio-label" for="can_supply_no_{{ req.id }}">No</label>
+                  <div class="meta-item mb-4" style="margin-bottom:12px">
+                    <div class="meta-label">Requested Qty</div>
+                    <div class="meta-value" style="color: var(--primary-dark); font-size: 16px;">{{ item.quantity }} packet(s)</div>
+                  </div>
+                  <div class="form-group mb-4" style="margin-bottom:12px">
+                    <label>Can you supply this product?</label>
+                    <div class="radio-group can-supply-group" data-req-id="{{ item.req_id }}">
+                      <div>
+                        <input type="radio" name="can_supply_{{ item.req_id }}" id="can_supply_yes_{{ item.req_id }}" value="yes" checked>
+                        <label class="radio-label" for="can_supply_yes_{{ item.req_id }}">Yes</label>
+                      </div>
+                      <div>
+                        <input type="radio" name="can_supply_{{ item.req_id }}" id="can_supply_no_{{ item.req_id }}" value="no">
+                        <label class="radio-label" for="can_supply_no_{{ item.req_id }}">No</label>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div id="supply-details-{{ req.id }}" class="conditional-group">
-                  <div class="form-group mb-0">
-                    <label>Quantity You Can Supply (max {{ req.requested_quantity }} packet(s))</label>
-                    <label style="font-size: 12px; color: #6b7280;">If you have less quantities than requested, put here</label>
-                    <input type="number" name="quantity_{{ req.id }}" class="form-input" min="1" max="{{ req.requested_quantity }}" value="{{ req.requested_quantity }}" placeholder="Max {{ req.requested_quantity }}">
+                  <div id="supply-details-{{ item.req_id }}" class="conditional-group">
+                    <div class="form-group mb-0">
+                      <label>Quantity You Can Supply (max {{ item.requested_quantity }} packet(s))</label>
+                      <label style="font-size: 12px; color: #6b7280;">If you have less quantities than requested, put here</label>
+                      <input type="number" name="quantity_{{ item.req_id }}" class="form-input" min="1" max="{{ item.requested_quantity }}" value="{{ item.requested_quantity }}" placeholder="Max {{ item.requested_quantity }}">
+                    </div>
                   </div>
                 </div>
+                {% endfor %}
               </div>
               {% endfor %}
 
