@@ -7,6 +7,11 @@ urlpatterns = [
     path("create/", views.product_create_view, name="product-create"),
     path("bulk-upload/template/", views.product_bulk_template_download_view, name="product-bulk-template-download"),
     path("bulk-upload/", views.product_bulk_upload_view, name="product-bulk-upload"),
+    path(
+        "bulk-upload/failed-rows/download/",
+        views.product_bulk_upload_failed_rows_download_view,
+        name="product-bulk-upload-failed-rows-download",
+    ),
     path("<int:pk>/edit/", views.product_edit_view, name="product-edit"),
     path("receive/", views.receive_stock_view, name="receive-stock"),
     path("<int:pk>/adjust/", views.adjust_stock_view, name="adjust-stock"),

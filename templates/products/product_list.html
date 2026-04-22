@@ -48,6 +48,20 @@
   </div>
 </div>
 
+{% if bulk_upload_report_available %}
+<div class="message message-warning" style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;max-width:none;width:100%;">
+  <div>
+    <strong>Bulk Upload Report Ready:</strong>
+    {{ bulk_upload_report_failed_count }} skipped row{{ bulk_upload_report_failed_count|pluralize }}
+    {% if bulk_upload_report_source_filename %}from <strong>{{ bulk_upload_report_source_filename }}</strong>{% endif %}
+    {% if bulk_upload_report_generated_at %}at {{ bulk_upload_report_generated_at }}{% endif %}.
+  </div>
+  <a class="btn btn-secondary btn-sm" style="white-space:nowrap;flex-shrink:0;" href="{% url 'product-bulk-upload-failed-rows-download' %}">
+    Download Failed Rows CSV
+  </a>
+</div>
+{% endif %}
+
 <div class="card">
   <div id="product-table-container">
     {% include "products/partials/_product_table.html" %}

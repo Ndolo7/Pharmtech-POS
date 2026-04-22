@@ -1,3 +1,4 @@
+import csv
 import json
 import logging
 from collections import defaultdict
@@ -42,6 +43,8 @@ from .models import (
 from .tasks import notify_next_supplier, send_purchase_confirmation_to_supplier
 
 logger = logging.getLogger(__name__)
+
+BULK_UPLOAD_FAILED_ROWS_SESSION_KEY = "products_bulk_upload_failed_rows_report"
 
 
 def _to_non_negative_int(value):
@@ -507,6 +510,7 @@ def _resolve_products_branch(request):
 def _products_page_context(request, search="", branch=None):
     active_branch = branch if branch is not None else _resolve_products_branch(request)
     can_select_branch = _can_select_products_branch(request.user)
+    report_meta = _bulk_upload_report_meta(request)
 
     return {
         "product_data": _build_product_data(active_branch, search=search),
@@ -516,6 +520,10 @@ def _products_page_context(request, search="", branch=None):
         "active_branch_id": active_branch.pk if active_branch else "",
         "can_select_branch": can_select_branch,
         "branch_options": Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else [],
+        "bulk_upload_report_available": report_meta["available"],
+        "bulk_upload_report_failed_count": report_meta["failed_count"],
+        "bulk_upload_report_source_filename": report_meta["source_filename"],
+        "bulk_upload_report_generated_at": report_meta["generated_at"],
     }
 
 
@@ -1122,6 +1130,44 @@ def _to_cell_text(value):
     return str(value).strip()
 
 
+def _row_cell_value(row, index):
+    if index is None:
+        return None
+    try:
+        return row[index]
+    except (IndexError, TypeError):
+        return None
+
+
+def _parse_decimal_cell(value, field_label):
+    text_value = _to_cell_text(value)
+    if not text_value:
+        raise ValueError(f"Missing {field_label}.")
+    try:
+        return Decimal(text_value.replace(",", ""))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Invalid {field_label}: {text_value}")
+
+
+def _parse_int_cell(value, field_label):
+    parsed_decimal = _parse_decimal_cell(value, field_label)
+    try:
+        return int(parsed_decimal)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid {field_label}: {_to_cell_text(value)}")
+
+
+def _bulk_upload_report_meta(request):
+    report = request.session.get(BULK_UPLOAD_FAILED_ROWS_SESSION_KEY) or {}
+    rows = report.get("rows") or []
+    return {
+        "available": bool(rows),
+        "failed_count": len(rows),
+        "source_filename": report.get("source_filename", ""),
+        "generated_at": report.get("generated_at", ""),
+    }
+
+
 @login_required
 def product_bulk_template_download_view(request):
     try:
@@ -1189,27 +1235,46 @@ def product_bulk_upload_view(request):
         created = 0
         updated = 0
         skipped = 0
+        failed_rows = []
 
-        for row in rows[1:]:
+        for row_index, row in enumerate(rows[1:], start=2):
             if row is None or all(cell in (None, "") for cell in row):
                 continue
 
+            barcode = _to_cell_text(_row_cell_value(row, h.get("code")))
+            description = _to_cell_text(_row_cell_value(row, h.get("description")))
+            pack_qty_text = _to_cell_text(_row_cell_value(row, h.get("pack_qty")))
+            trade_price_text = _to_cell_text(_row_cell_value(row, h.get("inv_tradeprice")))
+            selling_price_text = _to_cell_text(_row_cell_value(row, h.get("selling_price")))
+            minimum_text = _to_cell_text(_row_cell_value(row, h.get("minimum")))
+            max_text = _to_cell_text(_row_cell_value(row, h.get("max")))
+
             try:
-                barcode = _to_cell_text(row[h["code"]])
-                description = _to_cell_text(row[h["description"]])
-                pack_quantity = int(Decimal(str(row[h["pack_qty"]]).strip()))
-                cost_price = Decimal(str(row[h["inv_tradeprice"]]).strip())
-                unit_price = Decimal(str(row[h["selling_price"]]).strip())
-                reorder_level = int(Decimal(str(row[h["minimum"]]).strip()))
-                max_stock = int(Decimal(str(row[h["max"]]).strip()))
+                pack_quantity = _parse_int_cell(pack_qty_text, "PACK_QTY")
+                cost_price = _parse_decimal_cell(trade_price_text, "INV_TRADEPRICE")
+                unit_price = _parse_decimal_cell(selling_price_text, "selling_Price")
+                reorder_level = _parse_int_cell(minimum_text, "minimum")
+                max_stock = _parse_int_cell(max_text, "max")
                 if not description:
-                    skipped += 1
-                    continue
+                    raise ValueError("Missing DESCRIPTION.")
                 if pack_quantity < 1 or max_stock < 1 or reorder_level < 0:
-                    skipped += 1
-                    continue
-            except Exception:
+                    raise ValueError("PACK_QTY and max must be at least 1, and minimum cannot be negative.")
+            except Exception as exc:
                 skipped += 1
+                reason = str(exc).strip() or "Invalid row data."
+                failed_rows.append(
+                    {
+                        "row_number": row_index,
+                        "code": barcode,
+                        "description": description,
+                        "pack_qty": pack_qty_text,
+                        "inv_tradeprice": trade_price_text,
+                        "selling_price": selling_price_text,
+                        "minimum": minimum_text,
+                        "max": max_text,
+                        "reason": reason,
+                    }
+                )
                 continue
 
             name = description
@@ -1247,6 +1312,20 @@ def product_bulk_upload_view(request):
             request,
             f"Bulk upload complete. Created: {created}, Updated: {updated}, Skipped: {skipped}.",
         )
+        if failed_rows:
+            request.session[BULK_UPLOAD_FAILED_ROWS_SESSION_KEY] = {
+                "generated_at": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "source_filename": upload.name,
+                "rows": failed_rows,
+            }
+            request.session.modified = True
+            messages.warning(
+                request,
+                f"{len(failed_rows)} row(s) were skipped. Use 'Download Failed Rows CSV' on the Products page.",
+            )
+        elif BULK_UPLOAD_FAILED_ROWS_SESSION_KEY in request.session:
+            del request.session[BULK_UPLOAD_FAILED_ROWS_SESSION_KEY]
+            request.session.modified = True
         return _render_product_table(request, branch=active_branch)
 
     return render(
@@ -1254,6 +1333,51 @@ def product_bulk_upload_view(request):
         "products/partials/_bulk_upload_form.html",
         {"form": ProductBulkUploadForm(), "active_branch_id": active_branch.pk if active_branch else ""},
     )
+
+
+@login_required
+@require_GET
+def product_bulk_upload_failed_rows_download_view(request):
+    report = request.session.get(BULK_UPLOAD_FAILED_ROWS_SESSION_KEY) or {}
+    failed_rows = report.get("rows") or []
+    if not failed_rows:
+        messages.error(request, "No failed rows report found. Upload a bulk file first.")
+        return redirect("product-list")
+
+    timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="bulk_upload_failed_rows_{timestamp}.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(
+        [
+            "row_number",
+            "code",
+            "DESCRIPTION",
+            "PACK_QTY",
+            "INV_TRADEPRICE",
+            "selling_Price",
+            "minimum",
+            "max",
+            "reason",
+        ]
+    )
+    for item in failed_rows:
+        writer.writerow(
+            [
+                item.get("row_number", ""),
+                item.get("code", ""),
+                item.get("description", ""),
+                item.get("pack_qty", ""),
+                item.get("inv_tradeprice", ""),
+                item.get("selling_price", ""),
+                item.get("minimum", ""),
+                item.get("max", ""),
+                item.get("reason", ""),
+            ]
+        )
+
+    return response
 
 
 @login_required
