@@ -1446,28 +1446,43 @@ def supplier_reorder_response_view(request, token):
         should_escalate_ids = []
         confirmed_branch_product_map = {}
 
-        unique_request_ids = []
-        seen_request_ids = set()
-        for req_id_str in request.POST.getlist("request_id"):
-            try:
-                req_id = int(req_id_str)
-            except ValueError:
+        submitted_branch_payload = defaultdict(dict)
+        for row_ref in request.POST.getlist("row_ref"):
+            row_ref = (row_ref or "").strip()
+            if not row_ref:
                 continue
-            if req_id in seen_request_ids:
-                continue
-            seen_request_ids.add(req_id)
-            unique_request_ids.append(req_id)
 
-        for req_id in unique_request_ids:
-            can_supply = request.POST.get(f"can_supply_{req_id}") == "yes"
+            req_id_raw = (request.POST.get(f"request_id_{row_ref}") or "").strip()
+            branch_name = (request.POST.get(f"branch_name_{row_ref}") or "").strip()
+            branch_requested_qty = _to_non_negative_int(request.POST.get(f"branch_requested_{row_ref}"))
+
+            try:
+                req_id = int(req_id_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if not branch_name:
+                continue
+
+            can_supply = request.POST.get(f"can_supply_{row_ref}") == "yes"
             quantity = None
-            quantity_raw = (request.POST.get(f"quantity_{req_id}") or "").strip()
+            quantity_raw = (request.POST.get(f"quantity_{row_ref}") or "").strip()
             if quantity_raw:
                 try:
                     quantity = int(quantity_raw)
                 except ValueError:
                     quantity = None
 
+            if can_supply:
+                if quantity is None or quantity <= 0:
+                    quantity = branch_requested_qty
+                quantity = min(max(quantity, 0), branch_requested_qty)
+            else:
+                quantity = 0
+
+            submitted_branch_payload[req_id][branch_name] = quantity
+
+        for req_id, submitted_branches in submitted_branch_payload.items():
             with transaction.atomic():
                 locked_req = (
                     SupplierReorderRequest.objects.select_for_update()
@@ -1493,14 +1508,41 @@ def supplier_reorder_response_view(request, token):
                     continue
 
                 effective_max = min(locked_req.requested_quantity, reorder.remaining_quantity)
-                if can_supply:
-                    if quantity is None or quantity <= 0:
-                        quantity = effective_max
-                    quantity = min(max(quantity, 0), effective_max)
-                else:
-                    quantity = 0
+                requested_branches = _normalized_branch_requirements(reorder.branch_requirements or {})
+                confirmed_branch_allocations = []
+                confirmed_quantity = 0
 
-                if not can_supply or quantity <= 0:
+                for branch_name, requested_branch_qty in requested_branches:
+                    branch_quantity = min(
+                        _to_non_negative_int(submitted_branches.get(branch_name, 0)),
+                        requested_branch_qty,
+                    )
+                    if branch_quantity <= 0:
+                        continue
+                    confirmed_branch_allocations.append((branch_name, branch_quantity))
+                    confirmed_quantity += branch_quantity
+
+                if not requested_branches and effective_max > 0:
+                    fallback_quantity = min(_to_non_negative_int(sum(submitted_branches.values())), effective_max)
+                    if fallback_quantity > 0:
+                        confirmed_branch_allocations = [("Unspecified Branch", fallback_quantity)]
+                        confirmed_quantity = fallback_quantity
+
+                if confirmed_quantity > effective_max:
+                    remaining_confirmable = effective_max
+                    trimmed_allocations = []
+                    for branch_name, branch_quantity in confirmed_branch_allocations:
+                        if remaining_confirmable <= 0:
+                            break
+                        adjusted_quantity = min(branch_quantity, remaining_confirmable)
+                        if adjusted_quantity <= 0:
+                            continue
+                        trimmed_allocations.append((branch_name, adjusted_quantity))
+                        remaining_confirmable -= adjusted_quantity
+                    confirmed_branch_allocations = trimmed_allocations
+                    confirmed_quantity = effective_max
+
+                if confirmed_quantity <= 0:
                     locked_req.status = SupplierReorderRequest.STATUS_REJECTED
                     locked_req.fulfilled_quantity = 0
                     locked_req.responded_at = now
@@ -1508,15 +1550,15 @@ def supplier_reorder_response_view(request, token):
                     if reorder.remaining_quantity > 0:
                         should_escalate_ids.append(reorder.id)
                 else:
-                    locked_req.fulfilled_quantity = quantity
-                    if quantity < locked_req.requested_quantity:
+                    locked_req.fulfilled_quantity = confirmed_quantity
+                    if confirmed_quantity < locked_req.requested_quantity:
                         locked_req.status = SupplierReorderRequest.STATUS_PARTIAL
                     else:
                         locked_req.status = SupplierReorderRequest.STATUS_ACCEPTED
                     locked_req.responded_at = now
                     locked_req.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
 
-                    reorder.remaining_quantity = max(reorder.remaining_quantity - quantity, 0)
+                    reorder.remaining_quantity = max(reorder.remaining_quantity - confirmed_quantity, 0)
                     if reorder.remaining_quantity == 0:
                         reorder.status = AutoReorderRequest.STATUS_FULFILLED
                         reorder.completed_at = now
@@ -1524,10 +1566,7 @@ def supplier_reorder_response_view(request, token):
 
                     if reorder.remaining_quantity > 0:
                         should_escalate_ids.append(reorder.id)
-                    for branch_name, branch_qty in _allocate_confirmed_branch_quantities(
-                        reorder.branch_requirements or {},
-                        quantity,
-                    ):
+                    for branch_name, branch_qty in confirmed_branch_allocations:
                         confirmed_branch_product_map.setdefault(branch_name, []).append(
                             {
                                 "product_name": locked_req.reorder_request.product.name,

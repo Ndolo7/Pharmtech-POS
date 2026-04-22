@@ -137,47 +137,42 @@
             <form method="post">
               {% csrf_token %}
 
-              {% for pending_request in pending_requests %}
+              {% for branch_group in branch_groups %}
               <div class="product-reorder-block" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:20px;">
                 <div class="meta-item mb-4" style="margin-bottom:16px">
-                  <div class="meta-label">Product</div>
-                  <div class="meta-value">{{ pending_request.reorder_request.product.name }}</div>
+                  <div class="meta-label">Branch</div>
+                  <div class="meta-value">{{ branch_group.name }}</div>
                 </div>
-                <div class="meta-item mb-4" style="margin-bottom:12px">
-                  <div class="meta-label">Requested Total</div>
-                  <div class="meta-value">{{ pending_request.requested_quantity }} packet(s)</div>
-                </div>
-                {% if pending_request.branch_breakdown %}
-                  <div class="meta-item mb-4" style="margin-bottom:12px">
-                    <div class="meta-label">Branch Breakdown</div>
-                    <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
-                      {% for branch_name, branch_qty in pending_request.branch_breakdown %}
-                        <div>&bull; {{ branch_name }}: {{ branch_qty }} packet(s)</div>
-                      {% endfor %}
-                    </div>
-                  </div>
-                {% endif %}
-                <input type="hidden" name="request_id" value="{{ pending_request.id }}">
+                {% for item in branch_group.items %}
                 <div style="border-top:1px solid #f1f5f9;padding-top:14px;margin-top:4px;">
+                  <input type="hidden" name="row_ref" value="r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}">
+                  <input type="hidden" name="request_id_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" value="{{ item.req_id }}">
+                  <input type="hidden" name="branch_name_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" value="{{ branch_group.name }}">
+                  <input type="hidden" name="branch_requested_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" value="{{ item.quantity }}">
+                  <div class="meta-item mb-4" style="margin-bottom:12px">
+                    <div class="meta-label">Product</div>
+                    <div class="meta-value">{{ item.product_name }}</div>
+                  </div>
                   <div class="form-group mb-4" style="margin-bottom:12px">
-                    <div class="radio-group can-supply-group" data-req-id="{{ pending_request.id }}">
+                    <div class="radio-group can-supply-group" data-row-ref="r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}">
                       <div>
-                        <input type="radio" name="can_supply_{{ pending_request.id }}" id="can_supply_yes_{{ pending_request.id }}" value="yes" checked>
-                        <label class="radio-label" for="can_supply_yes_{{ pending_request.id }}">Yes</label>
+                        <input type="radio" name="can_supply_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" id="can_supply_yes_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" value="yes" checked>
+                        <label class="radio-label" for="can_supply_yes_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}">Yes</label>
                       </div>
                       <div>
-                        <input type="radio" name="can_supply_{{ pending_request.id }}" id="can_supply_no_{{ pending_request.id }}" value="no">
-                        <label class="radio-label" for="can_supply_no_{{ pending_request.id }}">No</label>
+                        <input type="radio" name="can_supply_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" id="can_supply_no_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" value="no">
+                        <label class="radio-label" for="can_supply_no_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}">No</label>
                       </div>
                     </div>
                   </div>
-                  <div id="supply-details-{{ pending_request.id }}" class="conditional-group">
+                  <div id="supply-details-r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" class="conditional-group">
                     <div class="form-group mb-0">
                       <label style="font-size: 12px; color: #6b7280;">If you have less quantities than requested, put here</label>
-                      <input type="number" name="quantity_{{ pending_request.id }}" class="form-input" min="1" max="{{ pending_request.requested_quantity }}" value="{{ pending_request.requested_quantity }}" placeholder="Max {{ pending_request.requested_quantity }}">
+                      <input type="number" name="quantity_r{{ forloop.parentloop.counter0 }}_{{ forloop.counter0 }}" class="form-input" min="1" max="{{ item.quantity }}" value="{{ item.quantity }}" placeholder="Max {{ item.quantity }}">
                     </div>
                   </div>
                 </div>
+                {% endfor %}
               </div>
               {% endfor %}
 
@@ -200,13 +195,13 @@
       if (!groups.length) return;
       
       groups.forEach(group => {
-        const reqId = group.dataset.reqId;
-        const detailsDiv = document.getElementById('supply-details-' + reqId);
-        const radios = group.querySelectorAll(`input[name="can_supply_${reqId}"]`);
+        const rowRef = group.dataset.rowRef;
+        const detailsDiv = document.getElementById('supply-details-' + rowRef);
+        const radios = group.querySelectorAll(`input[name="can_supply_${rowRef}"]`);
         
         const updateVisibility = () => {
           const selected = Array.from(radios).find(radio => radio.checked);
-          const qtyInput = detailsDiv ? detailsDiv.querySelector(`input[name="quantity_${reqId}"]`) : null;
+          const qtyInput = detailsDiv ? detailsDiv.querySelector(`input[name="quantity_${rowRef}"]`) : null;
           if (selected && selected.value === 'yes' && detailsDiv) {
             detailsDiv.classList.remove('hidden');
             if (qtyInput) qtyInput.setAttribute('required', 'required');

@@ -206,6 +206,25 @@ class SupplierReorderResponseViewTests(TestCase):
             priority=1,
         )
 
+    def _build_branch_response_payload(self, supplier_request, decisions):
+        branch_requirements = supplier_request.reorder_request.branch_requirements or {}
+        payload = {"row_ref": []}
+
+        for idx, (branch_name, can_supply, quantity) in enumerate(decisions):
+            row_ref = f"row_{idx}"
+            requested_qty = int(branch_requirements.get(branch_name, 0) or 0)
+            requested_qty = max(requested_qty, 0)
+
+            payload["row_ref"].append(row_ref)
+            payload[f"request_id_{row_ref}"] = str(supplier_request.id)
+            payload[f"branch_name_{row_ref}"] = branch_name
+            payload[f"branch_requested_{row_ref}"] = str(requested_qty)
+            payload[f"can_supply_{row_ref}"] = "yes" if can_supply else "no"
+            if quantity is not None:
+                payload[f"quantity_{row_ref}"] = str(quantity)
+
+        return payload
+
     def test_supplier_link_shows_all_pending_products_grouped_by_branch(self):
         now = timezone.now()
         first_product = Product.objects.create(
@@ -274,7 +293,7 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertContains(response, "Sukari")
         self.assertContains(response, "All needed products grouped by branch")
 
-    def test_response_form_renders_single_input_group_per_supplier_request(self):
+    def test_response_form_keeps_branch_layout_with_unique_controls(self):
         now = timezone.now()
         product = Product.objects.create(
             name="Branch Split Item",
@@ -308,10 +327,12 @@ class SupplierReorderResponseViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'name="request_id"', count=1)
-        self.assertContains(response, f'name="can_supply_{supplier_request.id}"', count=2)
-        self.assertContains(response, f'id="can_supply_yes_{supplier_request.id}"', count=1)
-        self.assertContains(response, f'id="can_supply_no_{supplier_request.id}"', count=1)
+        self.assertContains(response, "Wendani")
+        self.assertContains(response, "Sukari")
+        self.assertContains(response, 'name="row_ref"', count=2)
+        self.assertContains(response, 'class="radio-group can-supply-group"', count=2)
+        self.assertContains(response, 'id="can_supply_yes_r0_0"', count=1)
+        self.assertContains(response, 'id="can_supply_yes_r1_0"', count=1)
 
     @patch("products.views.notify_next_supplier.delay")
     def test_yes_response_without_quantity_defaults_to_requested_quantity(self, _notify_delay):
@@ -345,10 +366,10 @@ class SupplierReorderResponseViewTests(TestCase):
 
         response = self.client.post(
             reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
-            data={
-                "request_id": [str(supplier_request.id)],
-                f"can_supply_{supplier_request.id}": "yes",
-            },
+            data=self._build_branch_response_payload(
+                supplier_request,
+                [("Wendani", True, None)],
+            ),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -391,11 +412,10 @@ class SupplierReorderResponseViewTests(TestCase):
 
         response = self.client.post(
             reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
-            data={
-                "request_id": [str(supplier_request.id)],
-                f"can_supply_{supplier_request.id}": "yes",
-                f"quantity_{supplier_request.id}": "6",
-            },
+            data=self._build_branch_response_payload(
+                supplier_request,
+                [("Wendani", True, 3), ("Sukari", True, 3)],
+            ),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -438,11 +458,10 @@ class SupplierReorderResponseViewTests(TestCase):
 
         self.client.post(
             reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
-            data={
-                "request_id": [str(supplier_request.id)],
-                f"can_supply_{supplier_request.id}": "yes",
-                f"quantity_{supplier_request.id}": "6",
-            },
+            data=self._build_branch_response_payload(
+                supplier_request,
+                [("Wendani", True, 3), ("Sukari", True, 3)],
+            ),
         )
         revisit_response = self.client.get(
             reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
@@ -455,6 +474,51 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertContains(revisit_response, "Partial")
         self.assertContains(revisit_response, "Confirmed Supply Summary")
         self.assertNotContains(revisit_response, "Confirm Submission")
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_second_branch_yes_is_recorded_when_first_branch_is_no(self, _notify_delay):
+        now = timezone.now()
+        product = Product.objects.create(
+            name="Second Branch Response Item",
+            barcode="TEST-CONFIRM-BRANCH-002",
+            unit_price=Decimal("12.00"),
+            cost_price=Decimal("6.00"),
+            reorder_level=10,
+            max_stock=100,
+            pack_quantity=1,
+            is_active=True,
+        )
+        reorder = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=10,
+            remaining_quantity=10,
+            branch_requirements={"Wendani": 6, "Sukari": 4},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=10,
+            expires_at=now + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            reverse("supplier-reorder-response", kwargs={"token": supplier_request.token}),
+            data=self._build_branch_response_payload(
+                supplier_request,
+                [("Wendani", False, None), ("Sukari", True, None)],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        supplier_request.refresh_from_db()
+        reorder.refresh_from_db()
+        self.assertEqual(supplier_request.status, SupplierReorderRequest.STATUS_PARTIAL)
+        self.assertEqual(supplier_request.fulfilled_quantity, 4)
+        self.assertEqual(reorder.remaining_quantity, 6)
 
 
 class ExhaustionAlertTaskTests(TestCase):
