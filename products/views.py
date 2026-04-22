@@ -1446,13 +1446,19 @@ def supplier_reorder_response_view(request, token):
         should_escalate_ids = []
         confirmed_branch_product_map = {}
 
-        request_ids = request.POST.getlist("request_id")
-        for req_id_str in request_ids:
+        unique_request_ids = []
+        seen_request_ids = set()
+        for req_id_str in request.POST.getlist("request_id"):
             try:
                 req_id = int(req_id_str)
             except ValueError:
                 continue
+            if req_id in seen_request_ids:
+                continue
+            seen_request_ids.add(req_id)
+            unique_request_ids.append(req_id)
 
+        for req_id in unique_request_ids:
             can_supply = request.POST.get(f"can_supply_{req_id}") == "yes"
             quantity = None
             quantity_raw = (request.POST.get(f"quantity_{req_id}") or "").strip()

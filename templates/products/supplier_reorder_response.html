@@ -137,39 +137,47 @@
             <form method="post">
               {% csrf_token %}
 
-              {% for branch_group in branch_groups %}
+              {% for pending_request in pending_requests %}
               <div class="product-reorder-block" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:20px;">
                 <div class="meta-item mb-4" style="margin-bottom:16px">
-                  <div class="meta-label">Branch</div>
-                  <div class="meta-value">{{ branch_group.name }}</div>
+                  <div class="meta-label">Product</div>
+                  <div class="meta-value">{{ pending_request.reorder_request.product.name }}</div>
                 </div>
-                {% for item in branch_group.items %}
-                <div style="border-top:1px solid #f1f5f9;padding-top:14px;margin-top:4px;">
-                  <input type="hidden" name="request_id" value="{{ item.req_id }}">
+                <div class="meta-item mb-4" style="margin-bottom:12px">
+                  <div class="meta-label">Requested Total</div>
+                  <div class="meta-value">{{ pending_request.requested_quantity }} packet(s)</div>
+                </div>
+                {% if pending_request.branch_breakdown %}
                   <div class="meta-item mb-4" style="margin-bottom:12px">
-                    <div class="meta-label">Product</div>
-                    <div class="meta-value">{{ item.product_name }}</div>
+                    <div class="meta-label">Branch Breakdown</div>
+                    <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
+                      {% for branch_name, branch_qty in pending_request.branch_breakdown %}
+                        <div>&bull; {{ branch_name }}: {{ branch_qty }} packet(s)</div>
+                      {% endfor %}
+                    </div>
                   </div>
+                {% endif %}
+                <input type="hidden" name="request_id" value="{{ pending_request.id }}">
+                <div style="border-top:1px solid #f1f5f9;padding-top:14px;margin-top:4px;">
                   <div class="form-group mb-4" style="margin-bottom:12px">
-                    <div class="radio-group can-supply-group" data-req-id="{{ item.req_id }}">
+                    <div class="radio-group can-supply-group" data-req-id="{{ pending_request.id }}">
                       <div>
-                        <input type="radio" name="can_supply_{{ item.req_id }}" id="can_supply_yes_{{ item.req_id }}" value="yes" checked>
-                        <label class="radio-label" for="can_supply_yes_{{ item.req_id }}">Yes</label>
+                        <input type="radio" name="can_supply_{{ pending_request.id }}" id="can_supply_yes_{{ pending_request.id }}" value="yes" checked>
+                        <label class="radio-label" for="can_supply_yes_{{ pending_request.id }}">Yes</label>
                       </div>
                       <div>
-                        <input type="radio" name="can_supply_{{ item.req_id }}" id="can_supply_no_{{ item.req_id }}" value="no">
-                        <label class="radio-label" for="can_supply_no_{{ item.req_id }}">No</label>
+                        <input type="radio" name="can_supply_{{ pending_request.id }}" id="can_supply_no_{{ pending_request.id }}" value="no">
+                        <label class="radio-label" for="can_supply_no_{{ pending_request.id }}">No</label>
                       </div>
                     </div>
                   </div>
-                  <div id="supply-details-{{ item.req_id }}" class="conditional-group">
+                  <div id="supply-details-{{ pending_request.id }}" class="conditional-group">
                     <div class="form-group mb-0">
                       <label style="font-size: 12px; color: #6b7280;">If you have less quantities than requested, put here</label>
-                      <input type="number" name="quantity_{{ item.req_id }}" class="form-input" min="1" max="{{ item.requested_quantity }}" value="{{ item.requested_quantity }}" placeholder="Max {{ item.requested_quantity }}">
+                      <input type="number" name="quantity_{{ pending_request.id }}" class="form-input" min="1" max="{{ pending_request.requested_quantity }}" value="{{ pending_request.requested_quantity }}" placeholder="Max {{ pending_request.requested_quantity }}">
                     </div>
                   </div>
                 </div>
-                {% endfor %}
               </div>
               {% endfor %}
 
@@ -194,19 +202,17 @@
       groups.forEach(group => {
         const reqId = group.dataset.reqId;
         const detailsDiv = document.getElementById('supply-details-' + reqId);
-        const radios = document.querySelectorAll(`input[name="can_supply_${reqId}"]`);
+        const radios = group.querySelectorAll(`input[name="can_supply_${reqId}"]`);
         
         const updateVisibility = () => {
-          const selected = document.querySelector(`input[name="can_supply_${reqId}"]:checked`);
-          if (selected && selected.value === 'yes') {
+          const selected = Array.from(radios).find(radio => radio.checked);
+          const qtyInput = detailsDiv ? detailsDiv.querySelector(`input[name="quantity_${reqId}"]`) : null;
+          if (selected && selected.value === 'yes' && detailsDiv) {
             detailsDiv.classList.remove('hidden');
-            // make underlying input required if needed, or rely on html validation
-            const qtyInput = document.querySelector(`input[name="quantity_${reqId}"]`);
-            if(qtyInput) qtyInput.setAttribute('required', 'required');
+            if (qtyInput) qtyInput.setAttribute('required', 'required');
           } else {
-            detailsDiv.classList.add('hidden');
-            const qtyInput = document.querySelector(`input[name="quantity_${reqId}"]`);
-            if(qtyInput) qtyInput.removeAttribute('required');
+            if (detailsDiv) detailsDiv.classList.add('hidden');
+            if (qtyInput) qtyInput.removeAttribute('required');
           }
         };
         

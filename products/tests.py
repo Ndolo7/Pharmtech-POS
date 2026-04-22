@@ -274,6 +274,45 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertContains(response, "Sukari")
         self.assertContains(response, "All needed products grouped by branch")
 
+    def test_response_form_renders_single_input_group_per_supplier_request(self):
+        now = timezone.now()
+        product = Product.objects.create(
+            name="Branch Split Item",
+            barcode="TEST-PENDING-UNIQUE-001",
+            unit_price=Decimal("14.00"),
+            cost_price=Decimal("7.00"),
+            reorder_level=10,
+            max_stock=100,
+            pack_quantity=1,
+            is_active=True,
+        )
+        reorder = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=10,
+            remaining_quantity=10,
+            branch_requirements={"Wendani": 6, "Sukari": 4},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=10,
+            expires_at=now + timedelta(hours=1),
+        )
+
+        response = self.client.get(
+            reverse("supplier-reorder-response", kwargs={"token": supplier_request.token})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="request_id"', count=1)
+        self.assertContains(response, f'name="can_supply_{supplier_request.id}"', count=2)
+        self.assertContains(response, f'id="can_supply_yes_{supplier_request.id}"', count=1)
+        self.assertContains(response, f'id="can_supply_no_{supplier_request.id}"', count=1)
+
     @patch("products.views.notify_next_supplier.delay")
     def test_yes_response_without_quantity_defaults_to_requested_quantity(self, _notify_delay):
         now = timezone.now()
