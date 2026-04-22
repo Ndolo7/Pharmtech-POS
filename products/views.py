@@ -1179,7 +1179,7 @@ def product_bulk_template_download_view(request):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Inventory Template"
-    sheet.append(["code", "DESCRIPTION", "PACK_QTY", "INV_TRADEPRICE", "selling_Price", "minimum", "max"])
+    sheet.append(["CODE", "DESCRIPTION", "PACK_QTY", "INV_TRADE_PRICE", "SELLING_PRICE", "MINIMUM", "MAXIMUM"])
     sheet.append(["1000001", "Paracetamol 500mg", 10, 50.00, 80.00, 20, 200])
 
     stream = BytesIO()
@@ -1222,12 +1222,12 @@ def product_bulk_upload_view(request):
             return _render_product_table(request, branch=active_branch)
 
         headers = [_normalized_header_name(col) for col in rows[0]]
-        required_headers = {"code", "description", "pack_qty", "inv_tradeprice", "selling_price", "minimum", "max"}
+        required_headers = {"code", "description", "pack_qty", "inv_trade_price", "selling_price", "minimum", "maximum"}
         if not required_headers.issubset(set(headers)):
             messages.error(
                 request,
-                "Missing required columns. Required: code, DESCRIPTION, PACK_QTY, INV_TRADEPRICE, "
-                "selling_Price, minimum, max.",
+                "Missing required columns. Required: CODE, DESCRIPTION, PACK_QTY, INV_TRADE_PRICE, "
+                "SELLING_PRICE, MINIMUM, MAXIMUM.",
             )
             return _render_product_table(request, branch=active_branch)
 
@@ -1244,21 +1244,21 @@ def product_bulk_upload_view(request):
             barcode = _to_cell_text(_row_cell_value(row, h.get("code")))
             description = _to_cell_text(_row_cell_value(row, h.get("description")))
             pack_qty_text = _to_cell_text(_row_cell_value(row, h.get("pack_qty")))
-            trade_price_text = _to_cell_text(_row_cell_value(row, h.get("inv_tradeprice")))
+            trade_price_text = _to_cell_text(_row_cell_value(row, h.get("inv_trade_price")))
             selling_price_text = _to_cell_text(_row_cell_value(row, h.get("selling_price")))
             minimum_text = _to_cell_text(_row_cell_value(row, h.get("minimum")))
-            max_text = _to_cell_text(_row_cell_value(row, h.get("max")))
+            maximum_text = _to_cell_text(_row_cell_value(row, h.get("maximum")))
 
             try:
                 pack_quantity = _parse_int_cell(pack_qty_text, "PACK_QTY")
-                cost_price = _parse_decimal_cell(trade_price_text, "INV_TRADEPRICE")
-                unit_price = _parse_decimal_cell(selling_price_text, "selling_Price")
-                reorder_level = _parse_int_cell(minimum_text, "minimum")
-                max_stock = _parse_int_cell(max_text, "max")
+                cost_price = _parse_decimal_cell(trade_price_text, "INV_TRADE_PRICE")
+                unit_price = _parse_decimal_cell(selling_price_text, "SELLING_PRICE")
+                reorder_level = _parse_int_cell(minimum_text, "MINIMUM")
+                max_stock = _parse_int_cell(maximum_text, "MAXIMUM")
                 if not description:
                     raise ValueError("Missing DESCRIPTION.")
                 if pack_quantity < 1 or max_stock < 1 or reorder_level < 0:
-                    raise ValueError("PACK_QTY and max must be at least 1, and minimum cannot be negative.")
+                    raise ValueError("PACK_QTY and MAXIMUM must be at least 1, and MINIMUM cannot be negative.")
             except Exception as exc:
                 skipped += 1
                 reason = str(exc).strip() or "Invalid row data."
@@ -1268,10 +1268,10 @@ def product_bulk_upload_view(request):
                         "code": barcode,
                         "description": description,
                         "pack_qty": pack_qty_text,
-                        "inv_tradeprice": trade_price_text,
+                        "inv_trade_price": trade_price_text,
                         "selling_price": selling_price_text,
                         "minimum": minimum_text,
-                        "max": max_text,
+                        "maximum": maximum_text,
                         "reason": reason,
                     }
                 )
@@ -1355,10 +1355,10 @@ def product_bulk_upload_failed_rows_download_view(request):
             "code",
             "DESCRIPTION",
             "PACK_QTY",
-            "INV_TRADEPRICE",
-            "selling_Price",
-            "minimum",
-            "max",
+            "INV_TRADE_PRICE",
+            "SELLING_PRICE",
+            "MINIMUM",
+            "MAXIMUM",
             "reason",
         ]
     )
@@ -1369,10 +1369,10 @@ def product_bulk_upload_failed_rows_download_view(request):
                 item.get("code", ""),
                 item.get("description", ""),
                 item.get("pack_qty", ""),
-                item.get("inv_tradeprice", ""),
+                item.get("inv_trade_price", ""),
                 item.get("selling_price", ""),
                 item.get("minimum", ""),
-                item.get("max", ""),
+                item.get("maximum", ""),
                 item.get("reason", ""),
             ]
         )
