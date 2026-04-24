@@ -78,6 +78,7 @@ EMAIL_USE_TLS=True
 EMAIL_USE_SSL=False
 DEFAULT_FROM_EMAIL=Ziadapharma <noreply@ziadapharma.co.ke>
 SERVER_EMAIL=Ziadapharma <noreply@ziadapharma.co.ke>
+SUPPLIER_RECEIPT_EMAIL_ENABLED=False
 ADMIN_EMAIL=admin@example.com
 ADMIN_PHONE=254700000001
 

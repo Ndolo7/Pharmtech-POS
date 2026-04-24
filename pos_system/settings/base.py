@@ -115,6 +115,7 @@ EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", default=False)
 EMAIL_TIMEOUT = max(1, config("EMAIL_TIMEOUT", cast=int, default=30))
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="Ziadapharma <noreply@ziadapharma.co.ke>")
 SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+SUPPLIER_RECEIPT_EMAIL_ENABLED = env_bool("SUPPLIER_RECEIPT_EMAIL_ENABLED", default=False)
 ADMIN_EMAIL = config("ADMIN_EMAIL", default="admin@example.com") 
 ADMIN_PHONE = config("ADMIN_PHONE", default="254746605208")
 

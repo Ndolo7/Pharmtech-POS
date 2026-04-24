@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from math import ceil
 from django.apps import apps
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
@@ -814,7 +815,7 @@ def receive_stock_view(request):
                         created_by=request.user,
                     )
 
-            if purchase_id_for_confirmation:
+            if purchase_id_for_confirmation and getattr(settings, "SUPPLIER_RECEIPT_EMAIL_ENABLED", False):
                 try:
                     send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
                 except Exception:
@@ -873,7 +874,6 @@ def adjust_stock_view(request, pk):
             try:
                 with transaction.atomic():
                     new_qty = form.cleaned_data["new_quantity"]
-                    reason = form.cleaned_data["reason"]
 
                     stock, _ = Stock.objects.get_or_create(product=product, branch=branch, defaults={"quantity": 0})
                     adjustment = new_qty - stock.quantity
@@ -885,7 +885,6 @@ def adjust_stock_view(request, pk):
                         branch=branch,
                         movement_type="adjustment",
                         quantity=adjustment,
-                        notes=reason,
                         created_by=request.user,
                     )
 
