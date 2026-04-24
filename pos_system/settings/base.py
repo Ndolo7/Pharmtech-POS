@@ -26,7 +26,6 @@ INSTALLED_APPS = [
     "django_htmx",
     "widget_tweaks",
     "django_filters",
-    "anymail",
     "django_celery_beat",
     # Local apps
     "accounts",
@@ -106,11 +105,16 @@ LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # Email settings
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default='Ziadapharma <noreply@example.com>')
-EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
-ANYMAIL = {
-    "BREVO_API_KEY": config("BREVO_API_KEY", default=""),
-}
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("EMAIL_HOST", default="workplaceproemail.com")
+EMAIL_PORT = config("EMAIL_PORT", cast=int, default=587)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", default=False)
+EMAIL_TIMEOUT = max(1, config("EMAIL_TIMEOUT", cast=int, default=30))
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="Ziadapharma <noreply@ziadapharma.co.ke>")
+SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 ADMIN_EMAIL = config("ADMIN_EMAIL", default="admin@example.com") 
 ADMIN_PHONE = config("ADMIN_PHONE", default="254746605208")
 
