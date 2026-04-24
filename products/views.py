@@ -814,17 +814,14 @@ def receive_stock_view(request):
                         created_by=request.user,
                     )
 
-            """
-            Uncomment the below lines to enable supplier purchase confirmation email
-            """
-            # if purchase_id_for_confirmation:
-            #     try:
-            #         send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
-            #     except Exception:
-            #         logger.exception(
-            #             "Failed to queue supplier purchase confirmation task",
-            #             extra={"purchase_id": purchase_id_for_confirmation},
-            #         )
+            if purchase_id_for_confirmation:
+                try:
+                    send_purchase_confirmation_to_supplier.delay(purchase_id_for_confirmation)
+                except Exception:
+                    logger.exception(
+                        "Failed to queue supplier purchase confirmation task",
+                        extra={"purchase_id": purchase_id_for_confirmation},
+                    )
 
             if request.htmx:
                 response = _rows_oob_response(request, changed_products, branch=active_branch)
