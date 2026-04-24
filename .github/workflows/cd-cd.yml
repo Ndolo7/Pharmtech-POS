@@ -106,7 +106,15 @@ jobs:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          EMAIL_BACKEND: ${{ secrets.EMAIL_BACKEND }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+          EMAIL_HOST_USER: ${{ secrets.EMAIL_HOST_USER }}
+          EMAIL_HOST_PASSWORD: ${{ secrets.EMAIL_HOST_PASSWORD }}
+          EMAIL_USE_TLS: ${{ secrets.EMAIL_USE_TLS }}
+          EMAIL_USE_SSL: ${{ secrets.EMAIL_USE_SSL }}
           DEFAULT_FROM_EMAIL: ${{ secrets.DEFAULT_FROM_EMAIL }}
+          SERVER_EMAIL: ${{ secrets.SERVER_EMAIL }}
           CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           SITE_BASE_URL: ${{ secrets.SITE_BASE_URL }}
@@ -120,7 +128,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: SECRET_KEY,ALLOWED_HOSTS,CSRF_TRUSTED_ORIGINS,DJANGO_ENV,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,BREVO_API_KEY,DEFAULT_FROM_EMAIL,CELERY_BROKER_URL,ADMIN_EMAIL,SITE_BASE_URL,AUTO_ORDER_LINK_EXPIRY_SECONDS,AUTO_ORDER_CHECK_INTERVAL_MINUTES,AUTO_ORDER_EMAIL_FROM,SMS_LEOPARD_API_KEY,SMS_LEOPARD_API_SECRET,SMS_LEOPARD_SOURCE
+          envs: SECRET_KEY,ALLOWED_HOSTS,CSRF_TRUSTED_ORIGINS,DJANGO_ENV,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,BREVO_API_KEY,EMAIL_BACKEND,EMAIL_HOST,EMAIL_PORT,EMAIL_HOST_USER,EMAIL_HOST_PASSWORD,EMAIL_USE_TLS,EMAIL_USE_SSL,DEFAULT_FROM_EMAIL,SERVER_EMAIL,CELERY_BROKER_URL,ADMIN_EMAIL,SITE_BASE_URL,AUTO_ORDER_LINK_EXPIRY_SECONDS,AUTO_ORDER_CHECK_INTERVAL_MINUTES,AUTO_ORDER_EMAIL_FROM,SMS_LEOPARD_API_KEY,SMS_LEOPARD_API_SECRET,SMS_LEOPARD_SOURCE
           script: |
             set -e
             cd /home/${{ secrets.VPS_USER }}/pharmtech-pos
@@ -137,7 +145,15 @@ jobs:
             echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
             echo "DATABASE_URL=postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@db:5432/$POSTGRES_DB" >> .env
             echo "BREVO_API_KEY=$BREVO_API_KEY" >> .env
+            echo "EMAIL_BACKEND=$EMAIL_BACKEND" >> .env
+            echo "EMAIL_HOST=$EMAIL_HOST" >> .env
+            echo "EMAIL_PORT=$EMAIL_PORT" >> .env
+            echo "EMAIL_HOST_USER=$EMAIL_HOST_USER" >> .env
+            echo "EMAIL_HOST_PASSWORD=$EMAIL_HOST_PASSWORD" >> .env
+            echo "EMAIL_USE_TLS=$EMAIL_USE_TLS" >> .env
+            echo "EMAIL_USE_SSL=$EMAIL_USE_SSL" >> .env
             echo "DEFAULT_FROM_EMAIL=$DEFAULT_FROM_EMAIL" >> .env
+            echo "SERVER_EMAIL=$SERVER_EMAIL" >> .env
             echo "CELERY_BROKER_URL=redis://redis:6379/1" >> .env
             echo "CELERY_RESULT_BACKEND=redis://redis:6379/1" >> .env
             echo "ADMIN_EMAIL=$ADMIN_EMAIL" >> .env

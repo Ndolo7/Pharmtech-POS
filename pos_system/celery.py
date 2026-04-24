@@ -5,8 +5,12 @@ from decouple import config
 
 
 django_env = config("DJANGO_ENV", default="dev").lower()
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", f"pos_system.settings.{django_env}")
+settings_module = {
+    "dev": "pos_system.settings.dev",
+    "prod": "pos_system.settings.prod",
+    "production": "pos_system.settings.prod",
+}.get(django_env, "pos_system.settings.dev")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
 
 app = Celery("pos_system")
 app.config_from_object("django.conf:settings", namespace="CELERY")

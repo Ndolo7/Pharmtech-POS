@@ -5,7 +5,7 @@ from unittest.mock import patch
 from celery.exceptions import Retry
 from django.conf import settings
 from django.urls import reverse
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 
@@ -814,7 +814,27 @@ class ReceiveStockPricingValidationTests(TestCase):
         self.assertEqual(self.product.unit_price, Decimal("120.00"))
 
     @patch("products.views.send_purchase_confirmation_to_supplier.delay")
-    def test_receive_stock_queues_supplier_pdf_confirmation(self, queue_pdf_task):
+    def test_receive_stock_does_not_queue_supplier_pdf_confirmation_when_disabled(self, queue_pdf_task):
+        response = self.client.post(
+            reverse("receive-stock"),
+            data={
+                "supplier_id": str(self.supplier.id),
+                "invoice_number": "INV-CONFIRM-PDF-DISABLED",
+                "reorder_request_id[]": [str(self.supplier_request.id)],
+                "quantity[]": ["2"],
+                "cost_price[]": ["90.00"],
+                "selling_price[]": ["120.00"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Purchase.objects.count(), 1)
+        queue_pdf_task.assert_not_called()
+
+    @override_settings(SUPPLIER_RECEIPT_EMAIL_ENABLED=True)
+    @patch("products.views.send_purchase_confirmation_to_supplier.delay")
+    def test_receive_stock_queues_supplier_pdf_confirmation_when_enabled(self, queue_pdf_task):
         response = self.client.post(
             reverse("receive-stock"),
             data={

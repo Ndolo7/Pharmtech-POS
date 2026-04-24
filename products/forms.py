@@ -105,9 +105,6 @@ class AdjustStockForm(forms.Form):
         min_value=0,
         widget=forms.NumberInput(attrs={"class": "form-input", "placeholder": "New quantity"}),
     )
-    reason = forms.CharField(
-        widget=forms.Textarea(attrs={"class": "form-textarea", "rows": 2, "placeholder": "Reason for adjustment"}),
-    )
 
 
 class ReceiveStockForm(forms.Form):

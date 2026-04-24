@@ -68,8 +68,17 @@ DATABASE_URL=postgres://postgres:password@localhost:5432/pos_db
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
-# Brevo (used by Anymail in production)
-BREVO_API_KEY=your_brevo_api_key
+# SMTP (Truehost)
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=workplaceproemail.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=noreply@ziadapharma.co.ke
+EMAIL_HOST_PASSWORD=your_truehost_mailbox_password
+EMAIL_USE_TLS=True
+EMAIL_USE_SSL=False
+DEFAULT_FROM_EMAIL=Ziadapharma <noreply@ziadapharma.co.ke>
+SERVER_EMAIL=Ziadapharma <noreply@ziadapharma.co.ke>
+SUPPLIER_RECEIPT_EMAIL_ENABLED=False
 ADMIN_EMAIL=admin@example.com
 ADMIN_PHONE=254700000001
 
@@ -77,24 +86,12 @@ ADMIN_PHONE=254700000001
 SITE_BASE_URL=http://localhost:8000
 AUTO_ORDER_CHECK_INTERVAL_MINUTES=15
 AUTO_ORDER_LINK_EXPIRY_SECONDS=3600
-AUTO_ORDER_EMAIL_FROM=noreply@pharmtech.local
+AUTO_ORDER_EMAIL_FROM=Ziadapharma <noreply@ziadapharma.co.ke>
 
 # SMS Leopard (for supplier/admin SMS alerts)
 SMS_LEOPARD_API_KEY=your_sms_leopard_api_key
 SMS_LEOPARD_API_SECRET=your_sms_leopard_api_secret
 SMS_LEOPARD_SOURCE=SMS_Leopard
-```
-
-Optional email settings for real supplier notifications:
-```env
-DEFAULT_FROM_EMAIL=noreply@pharmtech.local
-EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
-EMAIL_HOST=localhost
-EMAIL_PORT=25
-EMAIL_HOST_USER=
-EMAIL_HOST_PASSWORD=
-EMAIL_USE_TLS=False
-EMAIL_USE_SSL=False
 ```
 
 ## Running the App
