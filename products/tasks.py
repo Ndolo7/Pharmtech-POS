@@ -1,6 +1,7 @@
 import logging
 import re
-from datetime import timedelta
+from collections import defaultdict
+from datetime import datetime, time as dt_time, timedelta
 from io import BytesIO
 from math import ceil
 from pathlib import Path
@@ -23,6 +24,38 @@ logger = logging.getLogger(__name__)
 
 def _auto_order_link_expiry_seconds() -> int:
     return max(int(getattr(settings, "AUTO_ORDER_LINK_EXPIRY_SECONDS", 3600) or 3600), 60)
+
+
+def _auto_order_scan_window_minutes() -> int:
+    configured = getattr(settings, "AUTO_ORDER_SCAN_WINDOW_MINUTES", 5)
+    try:
+        return max(int(configured or 5), 1)
+    except (TypeError, ValueError):
+        return 5
+
+
+def _is_within_scan_window(now_local, target_time: dt_time, window_minutes: int) -> bool:
+    target_dt = datetime.combine(now_local.date(), target_time, tzinfo=now_local.tzinfo)
+    delta_seconds = abs((now_local - target_dt).total_seconds())
+    return delta_seconds <= (window_minutes * 60)
+
+
+def _is_appointed_scan_time(now_local) -> bool:
+    from .models import AutoOrderScheduleSetting
+
+    config = AutoOrderScheduleSetting.objects.order_by("id").first()
+    daily_time = config.daily_run_time if config else dt_time(8, 0)
+    sunday_time = config.sunday_run_time if config else dt_time(11, 0)
+    window_minutes = _auto_order_scan_window_minutes()
+
+    if _is_within_scan_window(now_local, daily_time, window_minutes):
+        return True
+
+    # Sunday-only dedicated scan.
+    if now_local.weekday() == 6 and _is_within_scan_window(now_local, sunday_time, window_minutes):
+        return True
+
+    return False
 
 
 def _site_base_url() -> str:
@@ -308,15 +341,59 @@ def _build_purchase_confirmation_pdf(purchase: Purchase) -> bytes:
 
 @shared_task
 def scan_low_stock_and_trigger_reorders():
+    from sales.models import SaleItem
+
     now = timezone.now()
+    now_local = timezone.localtime(now)
+    if getattr(settings, "AUTO_ORDER_ENFORCE_APPOINTED_WINDOW", True) and not _is_appointed_scan_time(now_local):
+        logger.info(
+            "Skipping auto-reorder scan outside appointed schedule window",
+            extra={"now": now_local.isoformat()},
+        )
+        return {"status": "skipped_outside_schedule", "created": 0, "resumed": 0, "cancelled_unsold": 0}
+
     created_count = 0
     resumed_count = 0
+    cancelled_unsold_count = 0
     active_branches = list(Branch.objects.filter(is_active=True).order_by("id"))
+    active_branch_by_id = {branch.id: branch for branch in active_branches}
+    sold_branches_by_product = defaultdict(set)
+    sold_product_branch_pairs = (
+        SaleItem.objects.filter(product__is_active=True, sale__branch__is_active=True)
+        .values_list("product_id", "sale__branch_id")
+        .distinct()
+    )
+    for product_id, branch_id in sold_product_branch_pairs:
+        if branch_id in active_branch_by_id:
+            sold_branches_by_product[int(product_id)].add(int(branch_id))
+    sold_product_ids = set(sold_branches_by_product.keys())
 
-    for product in Product.objects.filter(is_active=True).order_by("id"):
+    if sold_product_ids:
+        cancelled_unsold_count = AutoReorderRequest.objects.filter(
+            status=AutoReorderRequest.STATUS_OPEN,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+        ).exclude(product_id__in=sold_product_ids).update(
+            status=AutoReorderRequest.STATUS_CANCELLED,
+            completed_at=now,
+            updated_at=now,
+        )
+    else:
+        cancelled_unsold_count = AutoReorderRequest.objects.filter(
+            status=AutoReorderRequest.STATUS_OPEN,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+        ).update(
+            status=AutoReorderRequest.STATUS_CANCELLED,
+            completed_at=now,
+            updated_at=now,
+        )
+
+    for product in Product.objects.filter(is_active=True, id__in=sold_product_ids).order_by("id"):
         pack_quantity = max(int(product.pack_quantity or 1), 1)
         reorder_level = product.reorder_level
         max_stock = max(int(product.max_stock or 1), 1)
+        sold_branch_ids = sold_branches_by_product.get(product.id, set())
+        if not sold_branch_ids:
+            continue
 
         total_packets = 0
         branch_requirements = {}
@@ -325,8 +402,11 @@ def scan_low_stock_and_trigger_reorders():
             for stock in product.stock_set.filter(branch__is_active=True).only("branch_id", "quantity")
         }
 
-        for branch in active_branches:
-            branch_stock = stock_by_branch_id.get(branch.id, 0)
+        for branch_id in sorted(sold_branch_ids):
+            branch = active_branch_by_id.get(branch_id)
+            if not branch:
+                continue
+            branch_stock = stock_by_branch_id.get(branch_id, 0)
             if branch_stock <= reorder_level:
                 deficit = max(max_stock - branch_stock, 0)
                 packets = _packets_needed(deficit, pack_quantity)
@@ -342,6 +422,10 @@ def scan_low_stock_and_trigger_reorders():
 
         reorder_id = None
         with transaction.atomic():
+            # Serialize per-product reorder scan work to prevent duplicate open
+            # auto orders when multiple scan tasks run concurrently.
+            Product.objects.select_for_update().filter(pk=product.pk).only("id").first()
+
             existing = (
                 AutoReorderRequest.objects.select_for_update()
                 .filter(
@@ -398,7 +482,7 @@ def scan_low_stock_and_trigger_reorders():
         if reorder_id:
             notify_next_supplier.delay(reorder_id)
 
-    return {"created": created_count, "resumed": resumed_count}
+    return {"created": created_count, "resumed": resumed_count, "cancelled_unsold": cancelled_unsold_count}
 
 
 @shared_task
