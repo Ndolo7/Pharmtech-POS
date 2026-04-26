@@ -4,6 +4,7 @@ function posTerminal() {
     paymentMethod: "cash",
     cashAmount: "",
     mpesaAmount: "",
+    creditAmount: "",
     customerName: "",
     customerPhone: "",
     processing: false,
@@ -199,8 +200,53 @@ function posTerminal() {
         this.setUiError("Please correct cart quantities to match available stock before submitting.");
         return;
       }
+
+      this.syncPaymentBreakdown();
+      const creditValue = Number(this.creditAmount || 0);
+      if (creditValue > 0 && !(this.customerName || this.customerPhone)) {
+        event.preventDefault();
+        this.setUiError("Add customer name or phone for credit sales.");
+        return;
+      }
+
+      if (this.paymentMethod === "mixed") {
+        const total = Number(this.getTotal().toFixed(2));
+        const paid = Number((Number(this.cashAmount || 0) + Number(this.mpesaAmount || 0) + creditValue).toFixed(2));
+        if (paid !== total) {
+          event.preventDefault();
+          this.setUiError("For mixed payments, cash + M-Pesa + credit must equal the cart total.");
+          return;
+        }
+      }
+
       this.clearUiError();
       this.processing = true;
+    },
+
+    syncPaymentBreakdown() {
+      const total = Number(this.getTotal().toFixed(2));
+      if (this.paymentMethod === "cash") {
+        this.cashAmount = total.toFixed(2);
+        this.mpesaAmount = "0.00";
+        this.creditAmount = "0.00";
+        return;
+      }
+      if (this.paymentMethod === "mpesa") {
+        this.cashAmount = "0.00";
+        this.mpesaAmount = total.toFixed(2);
+        this.creditAmount = "0.00";
+        return;
+      }
+      if (this.paymentMethod === "credit") {
+        this.cashAmount = "0.00";
+        this.mpesaAmount = "0.00";
+        this.creditAmount = total.toFixed(2);
+        return;
+      }
+
+      this.cashAmount = this.cashAmount || "0.00";
+      this.mpesaAmount = this.mpesaAmount || "0.00";
+      this.creditAmount = this.creditAmount || "0.00";
     },
 
     openSessionSalesModal() {
@@ -252,6 +298,7 @@ function posTerminal() {
       this.customerPhone = "";
       this.cashAmount = "";
       this.mpesaAmount = "";
+      this.creditAmount = "";
       this.paymentMethod = "cash";
       this.clearUiError();
     },

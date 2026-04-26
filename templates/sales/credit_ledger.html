@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Credit Ledger — ZiadaRx{% endblock %}
+{% block page_title %}Credit Ledger{% endblock %}
+
+{% block content %}
+<div class="card mb-4" style="overflow: visible;">
+  <div class="card-header"><h2>Filter</h2></div>
+  <div class="card-body" style="overflow: visible;">
+    <form method="get" class="flex gap-3 items-center">
+      <div class="form-group" style="margin:0; min-width: 280px;">
+        <input type="text" name="q" value="{{ search }}" class="form-input" placeholder="Search customer name or phone">
+      </div>
+      {% if can_select_branch %}
+      <div class="form-group" style="margin:0; width:220px;">
+        <select name="branch_id" class="form-input search-select">
+          <option value="all" {% if active_branch_id == "all" %}selected{% endif %}>All Branches</option>
+          {% for b in branch_options %}
+          <option value="{{ b.id }}" {% if active_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <button type="submit" class="btn btn-primary">Apply</button>
+    </form>
+    {% if not can_select_branch and active_branch %}
+    <div class="text-muted text-sm mt-2">Showing branch: <strong>{{ active_branch.name }}</strong></div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="stats-grid mb-4">
+  <div class="stat-card red">
+    <div class="label">Outstanding Credit</div>
+    <div class="value">KES {{ summary.total_outstanding|floatformat:2 }}</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="label">Customers With Balance</div>
+    <div class="value">{{ summary.customers_with_balance }}</div>
+  </div>
+  <div class="stat-card green">
+    <div class="label">Collected Today</div>
+    <div class="value">KES {{ summary.collected_today|floatformat:2 }}</div>
+  </div>
+  <div class="stat-card yellow">
+    <div class="label">Tracked Customers</div>
+    <div class="value">{{ summary.tracked_customers }}</div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><h2>Outstanding Accounts</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Phone</th>
+          {% if active_branch_id == "all" %}<th>Branch</th>{% endif %}
+          <th>Outstanding</th>
+          <th>Updated</th>
+          <th>Record Repayment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in outstanding_accounts %}
+        <tr>
+          <td>{{ account.customer_name }}</td>
+          <td>{{ account.customer_phone|default:"-" }}</td>
+          {% if active_branch_id == "all" %}<td>{{ account.branch.name }}</td>{% endif %}
+          <td class="font-bold">KES {{ account.outstanding_balance|floatformat:2 }}</td>
+          <td>{{ account.updated_at|date:"d M Y H:i" }}</td>
+          <td style="min-width: 320px;">
+            <form method="post" action="{% url 'credit-repayment' account.id %}" class="flex gap-2 items-center" style="flex-wrap:wrap;">
+              {% csrf_token %}
+              <input type="hidden" name="account_id" value="{{ account.id }}">
+              <input type="hidden" name="branch_id" value="{{ active_branch_id }}">
+              <input type="number" name="amount" min="0.01" max="{{ account.outstanding_balance }}" step="0.01" required class="form-input" placeholder="Amount" style="width: 110px;">
+              <select name="payment_method" class="form-input" style="width: 120px;">
+                <option value="cash">Cash</option>
+                <option value="mpesa">M-Pesa</option>
+              </select>
+              <input type="text" name="notes" class="form-input" placeholder="Optional note" style="min-width: 130px; flex: 1;">
+              <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="{% if active_branch_id == 'all' %}6{% else %}5{% endif %}" class="empty-state" style="padding:20px;">
+            No outstanding credit accounts found.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Recent Credit Activity</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Customer</th>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Method</th>
+          <th>Receipt</th>
+          <th>By</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in recent_transactions %}
+        <tr>
+          <td>{{ tx.created_at|date:"d M Y H:i" }}</td>
+          <td>{{ tx.account.customer_name }}</td>
+          <td>{{ tx.get_transaction_type_display }}</td>
+          <td class="font-medium">KES {{ tx.amount|floatformat:2 }}</td>
+          <td>{{ tx.get_payment_method_display|default:"-" }}</td>
+          <td>{% if tx.sale %}{{ tx.sale.receipt_number }}{% else %}-{% endif %}</td>
+          <td>{% if tx.created_by %}{{ tx.created_by.get_full_name|default:tx.created_by.username }}{% else %}-{% endif %}</td>
+          <td>{{ tx.notes|default:"-" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="empty-state" style="padding:20px;">No credit transactions yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

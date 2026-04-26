@@ -8,6 +8,7 @@
       <form method="post"
         hx-post="{% url 'receive-stock' %}"
         hx-swap="none"
+        hx-disabled-elt="#receive-stock-submit"
         hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
         {% csrf_token %}
         {% if all_branches %}

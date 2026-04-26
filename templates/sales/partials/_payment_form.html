@@ -7,11 +7,12 @@
   <div class="payment-methods">
     <button class="payment-method-btn" :class="paymentMethod==='cash'?'active':''" @click.prevent="paymentMethod='cash'">Cash</button>
     <button class="payment-method-btn" :class="paymentMethod==='mpesa'?'active':''" @click.prevent="paymentMethod='mpesa'">M-Pesa</button>
+    <button class="payment-method-btn" :class="paymentMethod==='credit'?'active':''" @click.prevent="paymentMethod='credit'">Credit</button>
     <button class="payment-method-btn" :class="paymentMethod==='mixed'?'active':''" @click.prevent="paymentMethod='mixed'">Mixed</button>
   </div>
 
   <template x-if="paymentMethod==='mixed'">
-    <div class="form-row" style="margin-bottom:10px">
+    <div class="form-row" style="margin-bottom:10px;grid-template-columns:repeat(3,minmax(0,1fr));">
       <div class="form-group" style="margin:0">
         <label class="text-sm">Cash Amount</label>
         <input type="number" class="form-input" x-model="cashAmount" step="0.01" placeholder="0.00">
@@ -20,6 +21,16 @@
         <label class="text-sm">M-Pesa Amount</label>
         <input type="number" class="form-input" x-model="mpesaAmount" step="0.01" placeholder="0.00">
       </div>
+      <div class="form-group" style="margin:0">
+        <label class="text-sm">Credit Amount</label>
+        <input type="number" class="form-input" x-model="creditAmount" step="0.01" placeholder="0.00">
+      </div>
+    </div>
+  </template>
+
+  <template x-if="paymentMethod==='credit' || (paymentMethod==='mixed' && Number(creditAmount) > 0)">
+    <div class="message message-warning" style="max-width:none;margin-bottom:10px">
+      Customer details are required for any credit amount.
     </div>
   </template>
 
@@ -34,6 +45,7 @@
     <input type="hidden" name="payment_method" :value="paymentMethod">
     <input type="hidden" name="cash_amount" :value="cashAmount">
     <input type="hidden" name="mpesa_amount" :value="mpesaAmount">
+    <input type="hidden" name="credit_amount" :value="creditAmount">
     <input type="hidden" name="customer_name" :value="customerName">
     <input type="hidden" name="customer_phone" :value="customerPhone">
 

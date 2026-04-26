@@ -162,6 +162,7 @@ def sales_report_view(request):
             total_amount=Sum("total_amount"),
             total_cash=Sum("cash_amount"),
             total_mpesa=Sum("mpesa_amount"),
+            total_credit=Sum("credit_amount"),
             count=Count("id"),
         )
 
@@ -172,6 +173,7 @@ def sales_report_view(request):
                 total_amount=Sum("total_amount"),
                 total_cash=Sum("cash_amount"),
                 total_mpesa=Sum("mpesa_amount"),
+                total_credit=Sum("credit_amount"),
                 count=Count("id"),
             )
             daily.append({
@@ -180,6 +182,7 @@ def sales_report_view(request):
                 "total_amount": day["total_amount"] or 0,
                 "total_cash": day["total_cash"] or 0,
                 "total_mpesa": day["total_mpesa"] or 0,
+                "total_credit": day["total_credit"] or 0,
                 "count": day["count"] or 0,
             })
             cur += timedelta(days=1)
@@ -434,6 +437,7 @@ def sales_day_breakdown_modal_view(request):
         total_amount=Sum("total_amount"),
         total_cash=Sum("cash_amount"),
         total_mpesa=Sum("mpesa_amount"),
+        total_credit=Sum("credit_amount"),
         count=Count("id"),
     )
 

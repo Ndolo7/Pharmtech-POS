@@ -8,9 +8,13 @@ from django.views.decorators.http import require_POST, require_GET
 from django.utils import timezone
 from django.http import HttpResponse
 from django.db import transaction
+from django.db.models import Count, Q, Sum
 from django.template.loader import render_to_string
-from .models import Sale, SaleItem, Shift, ShiftExpense
-from .forms import ShiftForm, CloseShiftForm, SaleForm
+from django.urls import reverse
+from branches.models import Branch
+from products.sms import normalize_phone_number
+from .models import CreditAccount, CreditTransaction, Sale, SaleItem, Shift, ShiftExpense
+from .forms import CloseShiftForm, CreditRepaymentForm, SaleForm, ShiftForm
 from products.models import Product, Stock, StockMovement
 
 
@@ -20,6 +24,77 @@ def _active_shift_for_user(user):
         branch=user.branch,
         is_closed=False,
     ).first()
+
+
+def _can_select_credit_branch(user):
+    return user.is_superuser or user.is_staff or getattr(user, "role", "") == "super_admin"
+
+
+def _credit_branch_context(request):
+    can_select_branch = _can_select_credit_branch(request.user)
+    branch_options = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else []
+    selected_branch_id = (request.GET.get("branch_id") or request.POST.get("branch_id") or "all").strip()
+    active_branch = None
+
+    if can_select_branch:
+        if selected_branch_id != "all":
+            active_branch = branch_options.filter(pk=selected_branch_id).first()
+            if not active_branch:
+                selected_branch_id = "all"
+    else:
+        if request.user.branch_id:
+            active_branch = Branch.objects.filter(pk=request.user.branch_id).first()
+            selected_branch_id = str(active_branch.pk) if active_branch else "all"
+        else:
+            selected_branch_id = "all"
+
+    return {
+        "can_select_branch": can_select_branch,
+        "branch_options": branch_options,
+        "active_branch": active_branch,
+        "active_branch_id": selected_branch_id,
+    }
+
+
+def _credit_ledger_redirect(branch_id):
+    url = reverse("credit-ledger")
+    normalized_branch_id = (branch_id or "").strip()
+    if normalized_branch_id:
+        url = f"{url}?branch_id={normalized_branch_id}"
+    return redirect(url)
+
+
+def _resolve_credit_account(branch, customer_name, customer_phone):
+    normalized_name = (customer_name or "").strip()
+    normalized_phone = normalize_phone_number(customer_phone) or ""
+
+    if not normalized_name and not normalized_phone:
+        raise ValueError("Credit sales require customer name or phone number.")
+
+    account_qs = CreditAccount.objects.select_for_update().filter(branch=branch)
+    account = None
+    if normalized_phone:
+        account = account_qs.filter(customer_phone=normalized_phone).first()
+    if not account and normalized_name:
+        account = account_qs.filter(customer_name__iexact=normalized_name, customer_phone=normalized_phone).first()
+
+    if account:
+        changed_fields = []
+        if normalized_name and account.customer_name != normalized_name:
+            account.customer_name = normalized_name
+            changed_fields.append("customer_name")
+        if normalized_phone and account.customer_phone != normalized_phone:
+            account.customer_phone = normalized_phone
+            changed_fields.append("customer_phone")
+        if changed_fields:
+            account.save(update_fields=[*changed_fields, "updated_at"])
+        return account
+
+    return CreditAccount.objects.create(
+        branch=branch,
+        customer_name=normalized_name or normalized_phone,
+        customer_phone=normalized_phone,
+    )
 
 
 def _build_product_data(branch, q=""):
@@ -135,10 +210,11 @@ def process_sale_view(request):
                 return _error_fragment("No active shift. Please start a shift first.")
 
             payment_method = form.cleaned_data["payment_method"]
-            cash_amount = float(form.cleaned_data.get("cash_amount") or 0)
-            mpesa_amount = float(form.cleaned_data.get("mpesa_amount") or 0)
-            customer_name = form.cleaned_data.get("customer_name", "")
-            customer_phone = form.cleaned_data.get("customer_phone", "")
+            cash_amount = Decimal(str(form.cleaned_data.get("cash_amount") or 0))
+            mpesa_amount = Decimal(str(form.cleaned_data.get("mpesa_amount") or 0))
+            credit_amount = Decimal(str(form.cleaned_data.get("credit_amount") or 0))
+            customer_name = (form.cleaned_data.get("customer_name", "") or "").strip()
+            customer_phone = (form.cleaned_data.get("customer_phone", "") or "").strip()
 
             normalized_cart = []
             for item in cart:
@@ -155,22 +231,34 @@ def process_sale_view(request):
                     {
                         "id": int(product_id),
                         "name": item.get("name", ""),
-                        "price": float(item.get("price", 0)),
+                        "price": Decimal(str(item.get("price", 0))),
                         "quantity": qty_int,
                     }
                 )
 
-            total_amount = sum(item["quantity"] * item["price"] for item in normalized_cart)
+            total_amount = sum((item["quantity"] * item["price"] for item in normalized_cart), Decimal("0.00"))
 
             # Auto-fill single payment
             if payment_method == "cash":
                 cash_amount = total_amount
-                mpesa_amount = 0
+                mpesa_amount = Decimal("0.00")
+                credit_amount = Decimal("0.00")
             elif payment_method == "mpesa":
                 mpesa_amount = total_amount
-                cash_amount = 0
-            elif round(cash_amount + mpesa_amount, 2) != round(total_amount, 2):
-                return _error_fragment("For mixed payments, cash plus M-Pesa must equal the sale total.")
+                cash_amount = Decimal("0.00")
+                credit_amount = Decimal("0.00")
+            elif payment_method == "credit":
+                credit_amount = total_amount
+                cash_amount = Decimal("0.00")
+                mpesa_amount = Decimal("0.00")
+            elif payment_method == "mixed":
+                if (cash_amount + mpesa_amount + credit_amount).quantize(Decimal("0.01")) != total_amount.quantize(Decimal("0.01")):
+                    return _error_fragment("For mixed payments, cash + M-Pesa + credit must equal the sale total.")
+            else:
+                return _error_fragment("Invalid payment method selected.")
+
+            if credit_amount > Decimal("0.00") and not (customer_name or customer_phone):
+                return _error_fragment("Customer name or phone is required for credit sales.")
 
             receipt_number = f"RCP-{uuid.uuid4().hex[:8].upper()}"
 
@@ -181,6 +269,7 @@ def process_sale_view(request):
                 payment_method=payment_method,
                 cash_amount=cash_amount,
                 mpesa_amount=mpesa_amount,
+                credit_amount=credit_amount,
                 total_amount=total_amount,
                 customer_name=customer_name,
                 customer_phone=customer_phone,
@@ -213,6 +302,20 @@ def process_sale_view(request):
                     created_by=request.user,
                 )
 
+            if credit_amount > Decimal("0.00"):
+                credit_account = _resolve_credit_account(branch, customer_name, customer_phone)
+                CreditTransaction.objects.create(
+                    account=credit_account,
+                    sale=sale,
+                    branch=branch,
+                    transaction_type=CreditTransaction.TYPE_CHARGE,
+                    amount=credit_amount,
+                    notes=f"Credit sale {receipt_number}",
+                    created_by=request.user,
+                )
+                credit_account.outstanding_balance += credit_amount
+                credit_account.save(update_fields=["outstanding_balance", "updated_at"])
+
         receipt_items = [
             {**item, "line_total": item["quantity"] * item["price"]}
             for item in normalized_cart
@@ -233,6 +336,113 @@ def process_sale_view(request):
 
     except Exception as e:
         return _error_fragment(f"Error: {e}")
+
+
+@require_GET
+@login_required
+def credit_ledger_view(request):
+    branch_ctx = _credit_branch_context(request)
+    active_branch = branch_ctx["active_branch"]
+    search = (request.GET.get("q") or "").strip()
+
+    accounts = CreditAccount.objects.all()
+    transactions = CreditTransaction.objects.select_related("account", "sale", "branch", "created_by")
+    if active_branch:
+        accounts = accounts.filter(branch=active_branch)
+        transactions = transactions.filter(branch=active_branch)
+
+    if search:
+        accounts = accounts.filter(Q(customer_name__icontains=search) | Q(customer_phone__icontains=search))
+
+    outstanding_accounts = accounts.filter(outstanding_balance__gt=0).order_by("-outstanding_balance", "customer_name")
+    recent_transactions = transactions.order_by("-created_at", "-id")[:80]
+
+    today = timezone.localdate()
+    collected_today = transactions.filter(
+        transaction_type=CreditTransaction.TYPE_REPAYMENT,
+        created_at__date=today,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+
+    summary = {
+        "total_outstanding": outstanding_accounts.aggregate(total=Sum("outstanding_balance"))["total"] or Decimal("0.00"),
+        "customers_with_balance": outstanding_accounts.count(),
+        "tracked_customers": accounts.aggregate(total=Count("id"))["total"] or 0,
+        "collected_today": collected_today,
+    }
+
+    return render(
+        request,
+        "sales/credit_ledger.html",
+        {
+            "outstanding_accounts": outstanding_accounts,
+            "recent_transactions": recent_transactions,
+            "summary": summary,
+            "search": search,
+            "repayment_form": CreditRepaymentForm(),
+            **branch_ctx,
+        },
+    )
+
+
+@require_POST
+@login_required
+def record_credit_repayment_view(request, account_id: int):
+    branch_ctx = _credit_branch_context(request)
+    branch_id = request.POST.get("branch_id") or branch_ctx["active_branch_id"]
+
+    form = CreditRepaymentForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Please provide a valid repayment amount and payment method.")
+        return _credit_ledger_redirect(branch_id)
+
+    posted_account_id = form.cleaned_data["account_id"]
+    if int(posted_account_id) != int(account_id):
+        messages.error(request, "Invalid repayment account details.")
+        return _credit_ledger_redirect(branch_id)
+
+    account_qs = CreditAccount.objects.select_related("branch")
+    if branch_ctx["active_branch"]:
+        account_qs = account_qs.filter(branch=branch_ctx["active_branch"])
+    elif not branch_ctx["can_select_branch"]:
+        messages.error(request, "You are not assigned to a valid branch.")
+        return _credit_ledger_redirect(branch_id)
+
+    account = get_object_or_404(account_qs, pk=account_id)
+    amount = form.cleaned_data["amount"]
+    payment_method = form.cleaned_data["payment_method"]
+    notes = (form.cleaned_data.get("notes") or "").strip()
+
+    try:
+        with transaction.atomic():
+            account = CreditAccount.objects.select_for_update().get(pk=account.pk)
+            if amount > account.outstanding_balance:
+                messages.error(
+                    request,
+                    f"Repayment cannot exceed outstanding balance (KES {account.outstanding_balance:.2f}).",
+                )
+                return _credit_ledger_redirect(branch_id)
+
+            account.outstanding_balance -= amount
+            account.save(update_fields=["outstanding_balance", "updated_at"])
+
+            CreditTransaction.objects.create(
+                account=account,
+                branch=account.branch,
+                transaction_type=CreditTransaction.TYPE_REPAYMENT,
+                amount=amount,
+                payment_method=payment_method,
+                notes=notes,
+                created_by=request.user,
+            )
+    except Exception as exc:
+        messages.error(request, f"Could not record repayment: {exc}")
+        return _credit_ledger_redirect(branch_id)
+
+    messages.success(
+        request,
+        f"Repayment recorded for {account.customer_name} (KES {amount:.2f}).",
+    )
+    return _credit_ledger_redirect(branch_id)
 
 
 @require_POST

@@ -98,12 +98,16 @@ class AutoReorderRequest(models.Model):
 
 class AutoOrderScheduleSetting(models.Model):
     use_daily_run_time = models.BooleanField(
-        default=False,
-        help_text="When enabled, auto stock checks run once daily at the selected time.",
+        default=True,
+        help_text="Deprecated setting kept for backward compatibility.",
     )
     daily_run_time = models.TimeField(
         default=time(8, 0),
         help_text="Daily run time (Africa/Nairobi) used when daily override is enabled.",
+    )
+    sunday_run_time = models.TimeField(
+        default=time(11, 0),
+        help_text="Sunday supplier review run time (Africa/Nairobi).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

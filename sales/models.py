@@ -10,6 +10,7 @@ class Sale(models.Model):
     PAYMENT_METHODS = [
         ('cash', 'Cash'),
         ('mpesa', 'M-Pesa'),
+        ('credit', 'Credit'),
         ('mixed', 'Mixed'),
     ]
 
@@ -19,6 +20,7 @@ class Sale(models.Model):
     payment_method = models.CharField(max_length=10, choices=PAYMENT_METHODS)
     cash_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     mpesa_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    credit_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -41,6 +43,56 @@ class SaleItem(models.Model):
     def save(self, *args, **kwargs):
         self.total_price = (self.quantity * self.unit_price) - self.discount
         super().save(*args, **kwargs)
+
+
+class CreditAccount(models.Model):
+    branch = models.ForeignKey('branches.Branch', on_delete=models.CASCADE, related_name='credit_accounts')
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=15, blank=True)
+    outstanding_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-outstanding_balance", "customer_name")
+
+    def __str__(self):
+        identity = self.customer_phone or self.customer_name
+        return f"{identity} - KES {self.outstanding_balance}"
+
+
+class CreditTransaction(models.Model):
+    TYPE_CHARGE = "charge"
+    TYPE_REPAYMENT = "repayment"
+    TYPE_ADJUSTMENT = "adjustment"
+    TRANSACTION_TYPES = [
+        (TYPE_CHARGE, "Credit Sale"),
+        (TYPE_REPAYMENT, "Repayment"),
+        (TYPE_ADJUSTMENT, "Adjustment"),
+    ]
+
+    PAYMENT_METHOD_CASH = "cash"
+    PAYMENT_METHOD_MPESA = "mpesa"
+    PAYMENT_METHOD_CHOICES = [
+        (PAYMENT_METHOD_CASH, "Cash"),
+        (PAYMENT_METHOD_MPESA, "M-Pesa"),
+    ]
+
+    account = models.ForeignKey(CreditAccount, on_delete=models.CASCADE, related_name="transactions")
+    sale = models.ForeignKey(Sale, on_delete=models.SET_NULL, null=True, blank=True, related_name="credit_transactions")
+    branch = models.ForeignKey('branches.Branch', on_delete=models.CASCADE, related_name="credit_transactions")
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=10, choices=PAYMENT_METHOD_CHOICES, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} - KES {self.amount}"
 
 class Shift(models.Model):
     cashier = models.ForeignKey(User, on_delete=models.CASCADE)

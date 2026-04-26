@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Sale, SaleItem, Shift, ShiftExpense
+from .models import CreditAccount, CreditTransaction, Sale, SaleItem, Shift, ShiftExpense
 
 
 class SaleItemInline(admin.TabularInline):
@@ -22,6 +22,7 @@ class SaleAdmin(admin.ModelAdmin):
         "payment_method",
         "cash_amount",
         "mpesa_amount",
+        "credit_amount",
         "total_amount",
         "created_at",
     )
@@ -55,4 +56,20 @@ class ShiftExpenseAdmin(admin.ModelAdmin):
     list_display = ("id", "shift", "amount", "description", "created_at")
     list_filter = ("shift__branch", "shift__cashier", "created_at")
     search_fields = ("description", "shift__cashier__username", "shift__branch__name")
+    ordering = ("-created_at",)
+
+
+@admin.register(CreditAccount)
+class CreditAccountAdmin(admin.ModelAdmin):
+    list_display = ("customer_name", "customer_phone", "branch", "outstanding_balance", "updated_at")
+    list_filter = ("branch", "updated_at")
+    search_fields = ("customer_name", "customer_phone", "branch__name")
+    ordering = ("-outstanding_balance", "customer_name")
+
+
+@admin.register(CreditTransaction)
+class CreditTransactionAdmin(admin.ModelAdmin):
+    list_display = ("account", "transaction_type", "amount", "payment_method", "branch", "created_by", "created_at")
+    list_filter = ("transaction_type", "payment_method", "branch", "created_at")
+    search_fields = ("account__customer_name", "account__customer_phone", "sale__receipt_number")
     ordering = ("-created_at",)
