@@ -41,11 +41,30 @@ class CloseShiftForm(forms.Form):
 
 class SaleForm(forms.Form):
     payment_method = forms.ChoiceField(
-        choices=(("cash", "Cash"), ("mpesa", "M-Pesa"), ("mixed", "Mixed")),
+        choices=(("cash", "Cash"), ("mpesa", "M-Pesa"), ("credit", "Credit"), ("mixed", "Mixed")),
         initial="cash",
     )
     cash_amount = forms.DecimalField(min_value=0, decimal_places=2, required=False)
     mpesa_amount = forms.DecimalField(min_value=0, decimal_places=2, required=False)
+    credit_amount = forms.DecimalField(min_value=0, decimal_places=2, required=False)
     customer_name = forms.CharField(max_length=200, required=False)
     customer_phone = forms.CharField(max_length=15, required=False)
     cart_json = forms.CharField(widget=forms.HiddenInput())
+
+
+class CreditRepaymentForm(forms.Form):
+    account_id = forms.IntegerField(min_value=1, widget=forms.HiddenInput())
+    amount = forms.DecimalField(
+        min_value=0.01,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-input", "step": "0.01", "placeholder": "0.00"}),
+        label="Repayment Amount (KES)",
+    )
+    payment_method = forms.ChoiceField(
+        choices=(("cash", "Cash"), ("mpesa", "M-Pesa")),
+        widget=forms.Select(attrs={"class": "form-input"}),
+    )
+    notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"class": "form-textarea", "rows": 2, "placeholder": "Optional note"}),
+    )
