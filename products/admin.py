@@ -35,8 +35,8 @@ class SupplierAdmin(admin.ModelAdmin):
 
 @admin.register(AutoOrderScheduleSetting)
 class AutoOrderScheduleSettingAdmin(admin.ModelAdmin):
-    list_display = ("use_daily_run_time", "daily_run_time", "updated_at")
-    fields = ("use_daily_run_time", "daily_run_time", "updated_at")
+    list_display = ("daily_run_time", "sunday_run_time", "updated_at")
+    fields = ("daily_run_time", "sunday_run_time", "updated_at")
     readonly_fields = ("updated_at",)
 
     def has_add_permission(self, request):

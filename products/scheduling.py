@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import time as dt_time
+
 from django.conf import settings
 
 from .models import AutoOrderScheduleSetting
@@ -8,71 +10,49 @@ AUTO_ORDER_SCAN_TASK = "products.tasks.scan_low_stock_and_trigger_reorders"
 AUTO_ORDER_PERIODIC_TASK_NAME = "scan-low-stock-and-trigger-reorders"
 AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME = "scan-low-stock-and-trigger-reorders-sunday-11am"
 
-
-def _interval_minutes() -> int:
-    configured = getattr(settings, "AUTO_ORDER_CHECK_INTERVAL_MINUTES", 1440)
-    try:
-        return max(int(configured or 1440), 1)
-    except (TypeError, ValueError):
-        return 1440
-
-
 def sync_auto_order_periodic_task(config: AutoOrderScheduleSetting | None = None):
     """
-    Keep the Celery beat database schedule in sync with the admin setting.
+    Keep the Celery beat database schedule in sync with admin timings.
 
-    - Daily override enabled: run once daily at config.daily_run_time.
-    - Daily override disabled: run using AUTO_ORDER_CHECK_INTERVAL_MINUTES.
+    Reorders should only be initiated by appointed-time checks, so the main
+    scan now always runs on a daily crontab at `daily_run_time`.
     """
-    from django_celery_beat.models import CrontabSchedule, IntervalSchedule, PeriodicTask
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
     if config is None:
         config = AutoOrderScheduleSetting.objects.order_by("id").first()
 
-    if config and config.use_daily_run_time:
-        schedule, _ = CrontabSchedule.objects.get_or_create(
-            minute=str(config.daily_run_time.minute),
-            hour=str(config.daily_run_time.hour),
-            day_of_week="*",
-            day_of_month="*",
-            month_of_year="*",
-            timezone=getattr(settings, "TIME_ZONE", "UTC"),
-        )
+    daily_run_time = config.daily_run_time if config else dt_time(8, 0)
+    schedule, _ = CrontabSchedule.objects.get_or_create(
+        minute=str(daily_run_time.minute),
+        hour=str(daily_run_time.hour),
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+        timezone=getattr(settings, "TIME_ZONE", "UTC"),
+    )
 
-        defaults = {
-            "task": AUTO_ORDER_SCAN_TASK,
-            "enabled": True,
-            "one_off": False,
-            "crontab": schedule,
-            "interval": None,
-            "solar": None,
-            "clocked": None,
-        }
-    else:
-        schedule, _ = IntervalSchedule.objects.get_or_create(
-            every=_interval_minutes(),
-            period=IntervalSchedule.MINUTES,
-        )
-
-        defaults = {
-            "task": AUTO_ORDER_SCAN_TASK,
-            "enabled": True,
-            "one_off": False,
-            "interval": schedule,
-            "crontab": None,
-            "solar": None,
-            "clocked": None,
-        }
+    defaults = {
+        "task": AUTO_ORDER_SCAN_TASK,
+        "enabled": True,
+        "one_off": False,
+        "crontab": schedule,
+        "interval": None,
+        "solar": None,
+        "clocked": None,
+    }
 
     periodic_task, _ = PeriodicTask.objects.update_or_create(
         name=AUTO_ORDER_PERIODIC_TASK_NAME,
         defaults=defaults,
     )
 
-    # Always keep a dedicated Sunday 11:00 schedule for supplier weekly reviews.
+    sunday_run_time = config.sunday_run_time if config else dt_time(13, 0)
+
+    # Always keep a dedicated Sunday schedule for supplier weekly reviews.
     sunday_schedule, _ = CrontabSchedule.objects.get_or_create(
-        minute="0",
-        hour="13",
+        minute=str(sunday_run_time.minute),
+        hour=str(sunday_run_time.hour),
         day_of_week="0",
         day_of_month="*",
         month_of_year="*",
