@@ -701,6 +701,24 @@ def receive_stock_view(request):
                 if len(request_ids) != len(cost_prices) or len(request_ids) != len(selling_prices):
                     raise ValueError("Incomplete pricing lines were submitted.")
 
+                existing_invoice = (
+                    Purchase.objects.select_for_update()
+                    .filter(
+                        supplier=supplier,
+                        branch=active_branch,
+                        invoice_number__iexact=invoice_number,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+                if existing_invoice:
+                    raise ValueError(
+                        (
+                            f"Invoice {invoice_number} for {supplier.name} has already been received for "
+                            f"{active_branch.name}. Use a different invoice number or review the existing entry."
+                        )
+                    )
+
                 total_amount = Decimal("0.00")
                 cleaned_lines = []
                 for req_id, qty, cost_raw, selling_raw in zip(request_ids, quantities, cost_prices, selling_prices):
