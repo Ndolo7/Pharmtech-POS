@@ -47,7 +47,7 @@ def sync_auto_order_periodic_task(config: AutoOrderScheduleSetting | None = None
         defaults=defaults,
     )
 
-    sunday_run_time = config.sunday_run_time if config else dt_time(13, 0)
+    sunday_run_time = config.sunday_run_time if config else dt_time(11, 0)
 
     # Always keep a dedicated Sunday schedule for supplier weekly reviews.
     sunday_schedule, _ = CrontabSchedule.objects.get_or_create(

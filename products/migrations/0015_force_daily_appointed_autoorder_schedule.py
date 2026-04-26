@@ -20,7 +20,7 @@ def force_daily_schedule_and_sync(apps, schema_editor):
     else:
         daily_hour = "8"
         daily_minute = "0"
-        sunday_hour = "13"
+        sunday_hour = "11"
         sunday_minute = "0"
 
     timezone_name = getattr(settings, "TIME_ZONE", "UTC")

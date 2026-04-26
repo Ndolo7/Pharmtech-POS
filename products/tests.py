@@ -239,7 +239,7 @@ class AutoOrderScheduleSyncTests(TestCase):
         setting = AutoOrderScheduleSetting.objects.create(
             use_daily_run_time=False,
             daily_run_time=dt_time(8, 0),
-            sunday_run_time=dt_time(13, 0),
+            sunday_run_time=dt_time(11, 0),
         )
 
         periodic_task = sync_auto_order_periodic_task(setting)
@@ -253,7 +253,7 @@ class AutoOrderScheduleSyncTests(TestCase):
         self.assertEqual(str(periodic_task.crontab.timezone), settings.TIME_ZONE)
         sunday_task = PeriodicTask.objects.get(name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME)
         self.assertIsNotNone(sunday_task.crontab)
-        self.assertEqual(sunday_task.crontab.hour, "13")
+        self.assertEqual(sunday_task.crontab.hour, "11")
         self.assertEqual(sunday_task.crontab.minute, "0")
         self.assertEqual(sunday_task.crontab.day_of_week, "0")
 

@@ -106,7 +106,7 @@ class AutoOrderScheduleSetting(models.Model):
         help_text="Daily run time (Africa/Nairobi) used when daily override is enabled.",
     )
     sunday_run_time = models.TimeField(
-        default=time(13, 0),
+        default=time(11, 0),
         help_text="Sunday supplier review run time (Africa/Nairobi).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
