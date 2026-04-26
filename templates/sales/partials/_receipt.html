@@ -31,6 +31,17 @@
       <span>Total</span>
       <span>KES {{ total_amount|floatformat:2 }}</span>
     </div>
+    <div class="text-sm text-muted" style="margin-top:10px">
+      Payment: {{ sale.get_payment_method_display }}
+      {% if sale.cash_amount %} · Cash KES {{ sale.cash_amount|floatformat:2 }}{% endif %}
+      {% if sale.mpesa_amount %} · M-Pesa KES {{ sale.mpesa_amount|floatformat:2 }}{% endif %}
+      {% if sale.credit_amount %} · Credit KES {{ sale.credit_amount|floatformat:2 }}{% endif %}
+    </div>
+    {% if sale.credit_amount and sale.customer_name %}
+    <div class="text-sm" style="margin-top:4px">
+      Credit customer: <strong>{{ sale.customer_name }}</strong>{% if sale.customer_phone %} ({{ sale.customer_phone }}){% endif %}
+    </div>
+    {% endif %}
   </div>
 </div>
 

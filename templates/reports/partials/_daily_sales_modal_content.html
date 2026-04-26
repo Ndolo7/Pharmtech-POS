@@ -21,6 +21,10 @@
       <div class="text-muted text-sm">Total Sales</div>
       <div class="font-medium">KES {{ totals.total_amount|default:0|floatformat:2 }}</div>
     </div>
+    <div>
+      <div class="text-muted text-sm">Credit Sales</div>
+      <div class="font-medium">KES {{ totals.total_credit|default:0|floatformat:2 }}</div>
+    </div>
   </div>
 
   <div class="session-sales-tabs">
