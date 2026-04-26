@@ -32,8 +32,10 @@ from products.tasks import (
     send_purchase_confirmation_sms,
     send_purchase_confirmation_to_supplier,
 )
+from sales.models import Sale, SaleItem
 
 
+@override_settings(AUTO_ORDER_ENFORCE_APPOINTED_WINDOW=False)
 class AutoReorderScanTests(TestCase):
     def setUp(self):
         self.wendani = Branch.objects.create(
@@ -50,6 +52,34 @@ class AutoReorderScanTests(TestCase):
             phone_number="0700000002",
             is_active=True,
         )
+        self.cashier = User.objects.create_user(
+            username="scan_cashier",
+            password="pass12345",
+            role="cashier",
+            branch=self.wendani,
+        )
+        self._receipt_counter = 0
+
+    def _mark_product_as_sold(self, product, branch=None, quantity=1):
+        branch = branch or self.wendani
+        self._receipt_counter += 1
+        sale = Sale.objects.create(
+            receipt_number=f"SCAN-SALE-{self._receipt_counter:03d}",
+            branch=branch,
+            cashier=self.cashier,
+            payment_method="cash",
+            cash_amount=Decimal("0.00"),
+            mpesa_amount=Decimal("0.00"),
+            credit_amount=Decimal("0.00"),
+            total_amount=Decimal(product.unit_price) * quantity,
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            quantity=quantity,
+            unit_price=product.unit_price,
+            total_price=Decimal(product.unit_price) * quantity,
+        )
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_uses_ceil_for_packet_calculation(self, _notify_delay):
@@ -65,12 +95,13 @@ class AutoReorderScanTests(TestCase):
         )
         Stock.objects.create(product=product, branch=self.wendani, quantity=1)
         Stock.objects.create(product=product, branch=self.sukari, quantity=1)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1)
 
         scan_low_stock_and_trigger_reorders()
 
         reorder = AutoReorderRequest.objects.get(product=product)
-        self.assertEqual(reorder.requested_quantity, 2)
-        self.assertEqual(reorder.branch_requirements, {"Wendani": 1, "Sukari": 1})
+        self.assertEqual(reorder.requested_quantity, 1)
+        self.assertEqual(reorder.branch_requirements, {"Wendani": 1})
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_counts_active_branches_without_stock_rows(self, _notify_delay):
@@ -86,12 +117,13 @@ class AutoReorderScanTests(TestCase):
         )
         Stock.objects.create(product=product, branch=self.wendani, quantity=3)
         # No stock row for Sukari branch. It should be treated as zero stock.
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1)
 
         scan_low_stock_and_trigger_reorders()
 
         reorder = AutoReorderRequest.objects.get(product=product)
-        self.assertEqual(reorder.requested_quantity, 4)
-        self.assertEqual(reorder.branch_requirements, {"Wendani": 2, "Sukari": 2})
+        self.assertEqual(reorder.requested_quantity, 2)
+        self.assertEqual(reorder.branch_requirements, {"Wendani": 2})
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_does_not_overwrite_open_manual_reorders(self, _notify_delay):
@@ -107,6 +139,7 @@ class AutoReorderScanTests(TestCase):
         )
         Stock.objects.create(product=product, branch=self.wendani, quantity=0)
         Stock.objects.create(product=product, branch=self.sukari, quantity=0)
+        self._mark_product_as_sold(product, branch=self.sukari, quantity=1)
 
         manual_reorder = AutoReorderRequest.objects.create(
             product=product,
@@ -130,31 +163,97 @@ class AutoReorderScanTests(TestCase):
             product=product,
             origin=AutoReorderRequest.ORIGIN_AUTO,
         )
-        self.assertEqual(auto_reorder.branch_requirements, {"Wendani": 5, "Sukari": 5})
+        self.assertEqual(auto_reorder.branch_requirements, {"Sukari": 5})
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_skips_unsold_products_and_cancels_open_unsold_auto_reorders(self, notify_delay):
+        unsold_product = Product.objects.create(
+            name="Unsold Product",
+            barcode="TEST-UNSOLD-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        sold_product = Product.objects.create(
+            name="Sold Product",
+            barcode="TEST-SOLD-001",
+            unit_price=Decimal("20.00"),
+            cost_price=Decimal("10.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        Stock.objects.create(product=unsold_product, branch=self.wendani, quantity=0)
+        Stock.objects.create(product=sold_product, branch=self.wendani, quantity=0)
+        self._mark_product_as_sold(sold_product, branch=self.wendani, quantity=1)
+
+        stale_unsold_reorder = AutoReorderRequest.objects.create(
+            product=unsold_product,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={self.wendani.name: 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        result = scan_low_stock_and_trigger_reorders()
+
+        stale_unsold_reorder.refresh_from_db()
+        self.assertEqual(stale_unsold_reorder.status, AutoReorderRequest.STATUS_CANCELLED)
+        self.assertIsNotNone(stale_unsold_reorder.completed_at)
+        self.assertFalse(
+            AutoReorderRequest.objects.filter(
+                product=unsold_product,
+                origin=AutoReorderRequest.ORIGIN_AUTO,
+                status=AutoReorderRequest.STATUS_OPEN,
+            ).exists()
+        )
+        self.assertTrue(
+            AutoReorderRequest.objects.filter(
+                product=sold_product,
+                origin=AutoReorderRequest.ORIGIN_AUTO,
+                status=AutoReorderRequest.STATUS_OPEN,
+            ).exists()
+        )
+        sold_reorder = AutoReorderRequest.objects.get(
+            product=sold_product,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        self.assertEqual(sold_reorder.branch_requirements, {"Wendani": 5})
+        self.assertGreaterEqual(result.get("cancelled_unsold", 0), 1)
+        notify_delay.assert_called_once()
 
 
 class AutoOrderScheduleSyncTests(TestCase):
     def setUp(self):
         AutoOrderScheduleSetting.objects.all().delete()
 
-    def test_sync_uses_interval_schedule_when_daily_override_is_disabled(self):
+    def test_sync_uses_daily_crontab_even_when_legacy_flag_is_disabled(self):
         setting = AutoOrderScheduleSetting.objects.create(
             use_daily_run_time=False,
             daily_run_time=dt_time(8, 0),
+            sunday_run_time=dt_time(13, 0),
         )
 
         periodic_task = sync_auto_order_periodic_task(setting)
         periodic_task.refresh_from_db()
 
-        expected_minutes = max(int(getattr(settings, "AUTO_ORDER_CHECK_INTERVAL_MINUTES", 15) or 15), 1)
         self.assertEqual(periodic_task.name, AUTO_ORDER_PERIODIC_TASK_NAME)
-        self.assertIsNotNone(periodic_task.interval)
-        self.assertEqual(periodic_task.interval.every, expected_minutes)
-        self.assertEqual(periodic_task.interval.period, "minutes")
-        self.assertIsNone(periodic_task.crontab)
+        self.assertIsNotNone(periodic_task.crontab)
+        self.assertIsNone(periodic_task.interval)
+        self.assertEqual(periodic_task.crontab.hour, "8")
+        self.assertEqual(periodic_task.crontab.minute, "0")
+        self.assertEqual(str(periodic_task.crontab.timezone), settings.TIME_ZONE)
         sunday_task = PeriodicTask.objects.get(name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME)
         self.assertIsNotNone(sunday_task.crontab)
-        self.assertEqual(sunday_task.crontab.hour, "11")
+        self.assertEqual(sunday_task.crontab.hour, "13")
         self.assertEqual(sunday_task.crontab.minute, "0")
         self.assertEqual(sunday_task.crontab.day_of_week, "0")
 
@@ -162,6 +261,7 @@ class AutoOrderScheduleSyncTests(TestCase):
         setting = AutoOrderScheduleSetting.objects.create(
             use_daily_run_time=True,
             daily_run_time=dt_time(8, 0),
+            sunday_run_time=dt_time(9, 30),
         )
 
         periodic_task = sync_auto_order_periodic_task(setting)
@@ -176,9 +276,63 @@ class AutoOrderScheduleSyncTests(TestCase):
             PeriodicTask.objects.filter(name=AUTO_ORDER_PERIODIC_TASK_NAME, task="products.tasks.scan_low_stock_and_trigger_reorders").exists()
         )
         sunday_task = PeriodicTask.objects.get(name=AUTO_ORDER_SUNDAY_PERIODIC_TASK_NAME)
-        self.assertEqual(sunday_task.crontab.hour, "11")
-        self.assertEqual(sunday_task.crontab.minute, "0")
+        self.assertEqual(sunday_task.crontab.hour, "9")
+        self.assertEqual(sunday_task.crontab.minute, "30")
         self.assertEqual(sunday_task.crontab.day_of_week, "0")
+
+
+@override_settings(AUTO_ORDER_ENFORCE_APPOINTED_WINDOW=True, AUTO_ORDER_SCAN_WINDOW_MINUTES=10)
+class AutoReorderScheduleWindowGuardTests(TestCase):
+    @patch("products.tasks.notify_next_supplier.delay")
+    @patch("products.tasks._is_appointed_scan_time", return_value=False)
+    def test_scan_skips_when_outside_appointed_window(self, _appointed_time_mock, notify_delay):
+        branch = Branch.objects.create(
+            name="Guard Branch",
+            code="GBR",
+            address="Guard",
+            phone_number="0700000099",
+            is_active=True,
+        )
+        product = Product.objects.create(
+            name="Guard Product",
+            barcode="GUARD-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        cashier = User.objects.create_user(
+            username="guard_cashier",
+            password="pass12345",
+            role="cashier",
+            branch=branch,
+        )
+        sale = Sale.objects.create(
+            receipt_number="GUARD-SALE-001",
+            branch=branch,
+            cashier=cashier,
+            payment_method="cash",
+            cash_amount=Decimal("10.00"),
+            mpesa_amount=Decimal("0.00"),
+            credit_amount=Decimal("0.00"),
+            total_amount=Decimal("10.00"),
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            quantity=1,
+            unit_price=Decimal("10.00"),
+            total_price=Decimal("10.00"),
+        )
+        Stock.objects.create(product=product, branch=branch, quantity=0)
+
+        result = scan_low_stock_and_trigger_reorders()
+
+        self.assertEqual(result["status"], "skipped_outside_schedule")
+        self.assertFalse(AutoReorderRequest.objects.exists())
+        notify_delay.assert_not_called()
 
 
 class SupplierReorderResponseViewTests(TestCase):
@@ -852,6 +1006,35 @@ class ReceiveStockPricingValidationTests(TestCase):
         self.assertEqual(Purchase.objects.count(), 1)
         purchase = Purchase.objects.get()
         queue_pdf_task.assert_called_once_with(purchase.id)
+
+    @override_settings(SUPPLIER_RECEIPT_EMAIL_ENABLED=True)
+    @patch("products.views.send_purchase_confirmation_to_supplier.delay")
+    def test_receive_stock_rejects_duplicate_invoice_submission(self, queue_pdf_task):
+        payload = {
+            "supplier_id": str(self.supplier.id),
+            "invoice_number": "INV-DUPLICATE-001",
+            "reorder_request_id[]": [str(self.supplier_request.id)],
+            "quantity[]": ["2"],
+            "cost_price[]": ["90.00"],
+            "selling_price[]": ["120.00"],
+        }
+
+        first_response = self.client.post(
+            reverse("receive-stock"),
+            data=payload,
+            HTTP_HX_REQUEST="true",
+        )
+        second_response = self.client.post(
+            reverse("receive-stock"),
+            data=payload,
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertContains(second_response, "already been received")
+        self.assertEqual(Purchase.objects.count(), 1)
+        queue_pdf_task.assert_called_once()
 
 
 class ReceiveStockQuantityPermissionTests(TestCase):
