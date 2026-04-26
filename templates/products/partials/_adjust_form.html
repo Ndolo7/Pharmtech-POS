@@ -1,5 +1,5 @@
 <div {% if request.htmx %}class="modal-backdrop"{% endif %} x-data {% if request.htmx %}@click.self="document.getElementById('modal-container').innerHTML=''"{% endif %}>
-  <div {% if request.htmx %}class="modal"{% endif %}>
+  <div {% if request.htmx %}class="modal adjust-stock-modal"{% endif %}>
     <div class="{% if request.htmx %}modal-header{% else %}mb-4 border-b pb-2{% endif %}">
       <h3 {% if not request.htmx %}class="text-lg font-bold"{% endif %}>Adjust Stock — {{ product.name }}</h3>
       {% if request.htmx %}<button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>{% endif %}
