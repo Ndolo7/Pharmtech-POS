@@ -100,11 +100,11 @@
               </div>
               <div class="meta-item mb-4" style="margin-bottom:12px">
                 <div class="meta-label">Original Requested Qty</div>
-                <div class="meta-value">{{ reference_request.requested_quantity }} packet(s)</div>
+                <div class="meta-value">{{ reference_request.requested_quantity_units }} unit(s)</div>
               </div>
               <div class="meta-item mb-4" style="margin-bottom:12px">
                 <div class="meta-label">Your Confirmed Qty</div>
-                <div class="meta-value">{{ reference_request.fulfilled_quantity }} packet(s)</div>
+                <div class="meta-value">{{ reference_request.fulfilled_quantity_units }} unit(s)</div>
               </div>
               <div class="meta-item">
                 <div class="meta-label">Current Status</div>
@@ -124,7 +124,7 @@
                   <div class="meta-label">{{ branch_group.name }}</div>
                   <div class="meta-value" style="font-size: 13px; margin-top: 4px;">
                     {% for item in branch_group.items %}
-                      <div>&bull; {{ item.product_name }}: {{ item.quantity }} packet(s)</div>
+                      <div>&bull; {{ item.product_name }}: {{ item.quantity_units|default:item.quantity }} unit(s)</div>
                     {% endfor %}
                   </div>
                 </div>
