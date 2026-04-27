@@ -1,21 +1,44 @@
 {% if errors %}
   <div class="message message-error">{{ errors }}</div>
 {% elif data is not None %}
+  <div class="card mb-4" style="padding:12px 14px;">
+    <div class="flex gap-2 items-center">
+      <button
+        type="button"
+        class="btn {% if tab == 'main' %}btn-primary{% else %}btn-secondary{% endif %}"
+        hx-get="{% url 'orders-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&origin={{ origin }}&status={{ status }}&branch_id={{ active_branch_id }}&tab=main"
+        hx-target="#report-results"
+        hx-swap="innerHTML"
+      >
+        Main Orders ({{ data.main.summary.total_orders|default:0 }})
+      </button>
+      <button
+        type="button"
+        class="btn {% if tab == 'failed' %}btn-danger{% else %}btn-secondary{% endif %}"
+        hx-get="{% url 'orders-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&origin={{ origin }}&status={{ status }}&branch_id={{ active_branch_id }}&tab=failed"
+        hx-target="#report-results"
+        hx-swap="innerHTML"
+      >
+        Failed Orders ({{ data.failed.summary.total_orders|default:0 }})
+      </button>
+    </div>
+  </div>
+
   <div class="stats-grid" style="margin-bottom:16px">
-    <div class="stat-card blue">
-      <div class="label">Total Orders</div>
-      <div class="value">{{ data.summary.total_orders }}</div>
-      <div class="text-muted text-sm mt-1">Requested: {{ data.summary.requested_packets }} packets</div>
+    <div class="stat-card {% if tab == 'failed' %}red{% else %}blue{% endif %}">
+      <div class="label">{% if tab == "failed" %}Failed Orders{% else %}Total Orders{% endif %}</div>
+      <div class="value">{{ active_data.summary.total_orders|default:0 }}</div>
+      <div class="text-muted text-sm mt-1">Requested: {{ active_data.summary.requested_packets|default:0 }} packets</div>
     </div>
-    <div class="stat-card yellow">
+    <div class="stat-card {% if tab == 'failed' %}red{% else %}yellow{% endif %}">
       <div class="label">Open</div>
-      <div class="value">{{ data.summary.open_count }}</div>
-      <div class="text-muted text-sm mt-1">Remaining: {{ data.summary.remaining_packets }} packets</div>
+      <div class="value">{{ active_data.summary.open_count|default:0 }}</div>
+      <div class="text-muted text-sm mt-1">Remaining: {{ active_data.summary.remaining_packets|default:0 }} packets</div>
     </div>
-    <div class="stat-card green">
+    <div class="stat-card {% if tab == 'failed' %}red{% else %}green{% endif %}">
       <div class="label">Fulfilled</div>
-      <div class="value">{{ data.summary.fulfilled_count }}</div>
-      <div class="text-muted text-sm mt-1">Exhausted: {{ data.summary.exhausted_count }} · Cancelled: {{ data.summary.cancelled_count }}</div>
+      <div class="value">{{ active_data.summary.fulfilled_count|default:0 }}</div>
+      <div class="text-muted text-sm mt-1">Exhausted: {{ active_data.summary.exhausted_count|default:0 }} · Cancelled: {{ active_data.summary.cancelled_count|default:0 }}</div>
     </div>
   </div>
 
@@ -37,8 +60,8 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in data.orders %}
-          <tr>
+          {% for row in active_data.orders %}
+          <tr{% if tab == "failed" %} style="background:#fff1f2;"{% endif %}>
             <td>ORD-{{ row.id }}</td>
             <td>{{ row.created_at|date:"d M Y H:i" }}</td>
             <td>{{ row.product_name }}</td>
@@ -62,7 +85,15 @@
             </td>
           </tr>
           {% empty %}
-          <tr><td colspan="10" class="empty-state">No orders found for the selected criteria.</td></tr>
+          <tr>
+            <td colspan="10" class="empty-state">
+              {% if tab == "failed" %}
+                No failed orders found for the selected criteria.
+              {% else %}
+                No orders found for the selected criteria.
+              {% endif %}
+            </td>
+          </tr>
           {% endfor %}
         </tbody>
       </table>

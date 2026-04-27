@@ -7,7 +7,7 @@ from decimal import Decimal
 from django.views.decorators.http import require_GET
 from branches.models import Branch
 from sales.models import Sale, Shift
-from products.models import AutoReorderRequest, Purchase, Supplier
+from products.models import AutoReorderRequest, Purchase, Supplier, SupplierReorderRequest
 
 
 def _can_select_report_branch(user):
@@ -77,6 +77,27 @@ def _order_matches_branch(order, branch):
     except (TypeError, ValueError):
         branch_qty = 0
     return branch_qty > 0
+
+
+def _order_is_failed(order, supplier_requests, remaining_packets: int) -> bool:
+    has_rejected_supplier = any(
+        request.status == SupplierReorderRequest.STATUS_REJECTED for request in supplier_requests
+    )
+    if order.status in {AutoReorderRequest.STATUS_EXHAUSTED, AutoReorderRequest.STATUS_CANCELLED}:
+        return True
+    return has_rejected_supplier and remaining_packets > 0
+
+
+def _orders_summary(orders, rows):
+    return {
+        "total_orders": len(rows),
+        "requested_packets": sum(row["requested_packets"] for row in rows),
+        "remaining_packets": sum(row["remaining_packets"] for row in rows),
+        "open_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_OPEN),
+        "fulfilled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_FULFILLED),
+        "exhausted_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_EXHAUSTED),
+        "cancelled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_CANCELLED),
+    }
 
 
 @login_required
@@ -313,6 +334,7 @@ def orders_report_view(request):
 
     origin = (request.GET.get("origin") or "all").strip().lower()
     status = (request.GET.get("status") or "all").strip().lower()
+    tab = (request.GET.get("tab") or "main").strip().lower()
 
     origin_options = [
         ("all", "All Types"),
@@ -327,6 +349,8 @@ def orders_report_view(request):
         origin = "all"
     if status not in valid_statuses:
         status = "all"
+    if tab not in {"main", "failed"}:
+        tab = "main"
 
     try:
         sd = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -347,7 +371,10 @@ def orders_report_view(request):
         if active_branch:
             orders = [order for order in orders if _order_matches_branch(order, active_branch)]
 
-        rows = []
+        main_rows = []
+        failed_rows = []
+        main_orders = []
+        failed_orders = []
         for order in orders:
             supplier_requests = list(order.supplier_requests.all())
             latest_supplier_request = supplier_requests[-1] if supplier_requests else None
@@ -355,36 +382,38 @@ def orders_report_view(request):
             remaining_packets = int(order.remaining_quantity or 0)
             fulfilled_packets = max(requested_packets - remaining_packets, 0)
             received_packets = sum(int(item.received_quantity or 0) for item in supplier_requests)
+            row = {
+                "id": order.id,
+                "created_at": timezone.localtime(order.created_at),
+                "product_name": order.product.name,
+                "origin_display": dict(AutoReorderRequest.ORIGIN_CHOICES).get(order.origin, order.origin),
+                "status_display": order.get_status_display(),
+                "requested_packets": requested_packets,
+                "remaining_packets": remaining_packets,
+                "fulfilled_packets": fulfilled_packets,
+                "received_packets": received_packets,
+                "branch_breakdown": _normalized_branch_requirements(order.branch_requirements or {}),
+                "supplier_requests_count": len(supplier_requests),
+                "latest_supplier_name": latest_supplier_request.supplier.name if latest_supplier_request else "-",
+                "latest_supplier_status": latest_supplier_request.get_status_display() if latest_supplier_request else "-",
+            }
 
-            rows.append(
-                {
-                    "id": order.id,
-                    "created_at": timezone.localtime(order.created_at),
-                    "product_name": order.product.name,
-                    "origin_display": dict(AutoReorderRequest.ORIGIN_CHOICES).get(order.origin, order.origin),
-                    "status_display": order.get_status_display(),
-                    "requested_packets": requested_packets,
-                    "remaining_packets": remaining_packets,
-                    "fulfilled_packets": fulfilled_packets,
-                    "received_packets": received_packets,
-                    "branch_breakdown": _normalized_branch_requirements(order.branch_requirements or {}),
-                    "supplier_requests_count": len(supplier_requests),
-                    "latest_supplier_name": latest_supplier_request.supplier.name if latest_supplier_request else "-",
-                    "latest_supplier_status": latest_supplier_request.get_status_display() if latest_supplier_request else "-",
-                }
-            )
+            if _order_is_failed(order, supplier_requests, remaining_packets):
+                failed_rows.append(row)
+                failed_orders.append(order)
+            else:
+                main_rows.append(row)
+                main_orders.append(order)
 
         data = {
-            "summary": {
-                "total_orders": len(rows),
-                "requested_packets": sum(row["requested_packets"] for row in rows),
-                "remaining_packets": sum(row["remaining_packets"] for row in rows),
-                "open_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_OPEN),
-                "fulfilled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_FULFILLED),
-                "exhausted_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_EXHAUSTED),
-                "cancelled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_CANCELLED),
+            "main": {
+                "summary": _orders_summary(main_orders, main_rows),
+                "orders": main_rows,
             },
-            "orders": rows,
+            "failed": {
+                "summary": _orders_summary(failed_orders, failed_rows),
+                "orders": failed_rows,
+            },
         }
     except ValueError:
         errors = "Invalid date format."
@@ -396,6 +425,8 @@ def orders_report_view(request):
         "end_date": end_date,
         "origin": origin,
         "status": status,
+        "tab": tab,
+        "active_data": (data or {}).get(tab, {"summary": {}, "orders": []}),
         "origin_options": origin_options,
         "status_options": status_options,
         **branch_ctx,
