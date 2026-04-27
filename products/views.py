@@ -91,7 +91,10 @@ def _build_branch_groups(branch_product_map):
             {
                 "name": branch_name,
                 "items": branch_items,
-                "total_packets": sum(item["quantity"] for item in branch_items),
+                "total_packets": sum(int(item.get("quantity", 0) or 0) for item in branch_items),
+                "total_units": sum(
+                    int(item.get("quantity_units", item.get("quantity", 0)) or 0) for item in branch_items
+                ),
             }
         )
     return groups
@@ -123,6 +126,7 @@ def _confirmed_branch_groups_for_supplier_request(supplier_request):
     if confirmed_qty <= 0:
         return []
 
+    pack_quantity = max(int(supplier_request.reorder_request.product.pack_quantity or 1), 1)
     branch_product_map = {}
     for branch_name, branch_qty in _allocate_confirmed_branch_quantities(
         supplier_request.reorder_request.branch_requirements or {},
@@ -132,6 +136,7 @@ def _confirmed_branch_groups_for_supplier_request(supplier_request):
             {
                 "product_name": supplier_request.reorder_request.product.name,
                 "quantity": branch_qty,
+                "quantity_units": branch_qty * pack_quantity,
             }
         )
     return _build_branch_groups(branch_product_map)
@@ -552,7 +557,7 @@ def _render_product_table(request, search="", branch=None):
     return render(request, "products/partials/_product_table.html", ctx)
 
 
-def _rows_oob_response(request, products, branch=None):
+def _rows_oob_response(request, products, branch=None, include_messages=True):
     unique_products = []
     seen_ids = set()
     for product in products:
@@ -560,7 +565,7 @@ def _rows_oob_response(request, products, branch=None):
             continue
         seen_ids.add(product.pk)
         unique_products.append(product)
-    payload = render_to_string("partials/_messages.html", {"oob": True}, request=request)
+    payload = render_to_string("partials/_messages.html", {"oob": True}, request=request) if include_messages else ""
 
     for product in unique_products:
         stock_qty = product.current_stock(branch) if branch else product.current_stock()
@@ -677,6 +682,7 @@ def receive_stock_view(request):
             active_branch = get_object_or_404(Branch, pk=request.POST["branch_id"])
 
         changed_products = []
+        requeue_reorder_ids = set()
         purchase_id_for_confirmation = None
 
         if not active_branch:
@@ -721,6 +727,7 @@ def receive_stock_view(request):
 
                 total_amount = Decimal("0.00")
                 cleaned_lines = []
+                zero_quantity_lines = []
                 for req_id, qty, cost_raw, selling_raw in zip(request_ids, quantities, cost_prices, selling_prices):
                     try:
                         qty_int = int(qty)
@@ -728,11 +735,30 @@ def receive_stock_view(request):
                         raise ValueError("Quantity must be a valid whole number.")
                     if qty_int < 0:
                         raise ValueError("Quantity cannot be negative.")
-                    if qty_int == 0:
-                        continue
 
-                    sup_req = SupplierReorderRequest.objects.select_for_update().get(pk=req_id)
+                    sup_req = (
+                        SupplierReorderRequest.objects.select_for_update()
+                        .select_related("reorder_request__product")
+                        .get(pk=req_id)
+                    )
+                    if sup_req.supplier_id != supplier.id:
+                        raise ValueError("One or more selected reorder lines do not belong to the selected supplier.")
                     product = sup_req.reorder_request.product
+
+                    max_allowed_packets = sup_req.pending_quantity
+                    if max_allowed_packets <= 0:
+                        raise ValueError(f"{product.name} has no pending quantity to receive.")
+
+                    branch_pending_packets = _branch_pending_packets(sup_req, active_branch)
+                    max_allowed_packets_for_branch = min(sup_req.pending_quantity, branch_pending_packets)
+                    if max_allowed_packets_for_branch <= 0:
+                        raise ValueError(
+                            f"{sup_req.reorder_request.product.name} is not pending for {active_branch.name}."
+                        )
+
+                    if qty_int == 0:
+                        zero_quantity_lines.append((sup_req, max_allowed_packets))
+                        continue
 
                     try:
                         cost_dec = Decimal(str(cost_raw).strip())
@@ -755,27 +781,81 @@ def receive_stock_view(request):
                             f"Selling price for {product.name} must be at least {min_selling_price.quantize(Decimal('0.01'))} (33% above unit cost)."
                         )
 
-                    branch_pending_packets = _branch_pending_packets(sup_req, active_branch)
-                    max_allowed_packets = min(sup_req.pending_quantity, branch_pending_packets)
-                    if max_allowed_packets <= 0:
-                        raise ValueError(
-                            f"{sup_req.reorder_request.product.name} is not pending for {active_branch.name}."
-                        )
-                    if not can_edit_quantity and qty_int != max_allowed_packets:
+                    if not can_edit_quantity and qty_int != max_allowed_packets_for_branch:
                         raise ValueError(
                             f"QTY (PACKETS) for {sup_req.reorder_request.product.name} can only be edited by super admin."
                         )
-                    if qty_int > max_allowed_packets:
+                    if qty_int > max_allowed_packets_for_branch:
                         raise ValueError(
-                            f"Cannot receive more than {max_allowed_packets} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
+                            f"Cannot receive more than {max_allowed_packets_for_branch} packet(s) for {sup_req.reorder_request.product.name} in {active_branch.name}."
                         )
 
                     actual_units_received = qty_int * product.pack_quantity
                     total_amount += qty_int * cost_dec
                     cleaned_lines.append((sup_req, product, qty_int, actual_units_received, cost_dec, cost_per_unit, selling_dec))
 
+                for sup_req, reverted_packets in zero_quantity_lines:
+                    if reverted_packets <= 0:
+                        continue
+
+                    original_fulfilled = _to_non_negative_int(sup_req.fulfilled_quantity)
+                    original_received = _to_non_negative_int(sup_req.received_quantity)
+                    updated_fulfilled = max(original_fulfilled - reverted_packets, original_received)
+                    if updated_fulfilled == original_fulfilled:
+                        continue
+
+                    sup_req.fulfilled_quantity = updated_fulfilled
+                    if sup_req.fulfilled_quantity <= 0:
+                        sup_req.status = SupplierReorderRequest.STATUS_REJECTED
+                    elif sup_req.fulfilled_quantity < sup_req.requested_quantity:
+                        sup_req.status = SupplierReorderRequest.STATUS_PARTIAL
+                    else:
+                        sup_req.status = SupplierReorderRequest.STATUS_ACCEPTED
+                    sup_req.save(update_fields=["fulfilled_quantity", "status", "updated_at"])
+
+                    reorder_request = (
+                        AutoReorderRequest.objects.select_for_update()
+                        .filter(pk=sup_req.reorder_request_id)
+                        .first()
+                    )
+                    if not reorder_request:
+                        continue
+
+                    requested_packets = _to_non_negative_int(reorder_request.requested_quantity)
+                    restored_packets = max(original_fulfilled - updated_fulfilled, 0)
+                    new_remaining = min(requested_packets, _to_non_negative_int(reorder_request.remaining_quantity) + restored_packets)
+                    update_fields = []
+                    if reorder_request.remaining_quantity != new_remaining:
+                        reorder_request.remaining_quantity = new_remaining
+                        update_fields.append("remaining_quantity")
+                    if new_remaining > 0 and reorder_request.status != AutoReorderRequest.STATUS_OPEN:
+                        reorder_request.status = AutoReorderRequest.STATUS_OPEN
+                        update_fields.append("status")
+                    if new_remaining > 0 and reorder_request.completed_at is not None:
+                        reorder_request.completed_at = None
+                        update_fields.append("completed_at")
+                    if update_fields:
+                        reorder_request.save(update_fields=[*update_fields, "updated_at"])
+                    if reorder_request.remaining_quantity > 0:
+                        requeue_reorder_ids.add(reorder_request.id)
+
                 if not cleaned_lines:
-                    raise ValueError("List must contain at least one positive quantity item.")
+                    for reorder_id in sorted(requeue_reorder_ids):
+                        notify_next_supplier.delay(reorder_id)
+                    if request.htmx:
+                        response = _rows_oob_response(
+                            request,
+                            changed_products,
+                            branch=active_branch,
+                            include_messages=False,
+                        )
+                        return _with_hx_trigger(
+                            response,
+                            "stock-action-success",
+                            {"message": "Receive completed with zero quantity. No stock was added."},
+                        )
+                    messages.success(request, "Receive completed with zero quantity. No stock was added.")
+                    return _redirect_with_branch("stock-list", active_branch)
 
                 purchase = Purchase.objects.create(
                     supplier=supplier,
@@ -842,8 +922,16 @@ def receive_stock_view(request):
                         extra={"purchase_id": purchase_id_for_confirmation},
                     )
 
+            for reorder_id in sorted(requeue_reorder_ids):
+                notify_next_supplier.delay(reorder_id)
+
             if request.htmx:
-                response = _rows_oob_response(request, changed_products, branch=active_branch)
+                response = _rows_oob_response(
+                    request,
+                    changed_products,
+                    branch=active_branch,
+                    include_messages=False,
+                )
                 return _with_hx_trigger(
                     response,
                     "stock-action-success",
@@ -1058,7 +1146,12 @@ def transfer_stock_view(request):
                         changed_products.append(product)
 
                 if request.htmx:
-                    response = _rows_oob_response(request, changed_products, branch=from_branch)
+                    response = _rows_oob_response(
+                        request,
+                        changed_products,
+                        branch=from_branch,
+                        include_messages=False,
+                    )
                     return _with_hx_trigger(
                         response,
                         "stock-action-success",
@@ -1535,11 +1628,13 @@ def supplier_reorder_response_view(request, token):
             pending_request.reorder_request.branch_requirements or {}
         )
         pending_request.branch_breakdown = branch_breakdown
+        pack_quantity = max(int(pending_request.reorder_request.product.pack_quantity or 1), 1)
         for branch_name, qty in branch_breakdown:
             branch_product_map.setdefault(branch_name, []).append(
                 {
                     "product_name": pending_request.reorder_request.product.name,
                     "quantity": qty,
+                    "quantity_units": qty * pack_quantity,
                     "req_id": pending_request.id,
                     "requested_quantity": pending_request.requested_quantity,
                 }
@@ -1554,10 +1649,13 @@ def supplier_reorder_response_view(request, token):
     if not primary_request_is_live:
         message_type, message = _used_supplier_link_message(primary_request)
         used_branch_groups = _confirmed_branch_groups_for_supplier_request(primary_request)
+        pack_quantity = max(int(primary_request.reorder_request.product.pack_quantity or 1), 1)
         reference_request = {
             "product_name": primary_request.reorder_request.product.name,
             "requested_quantity": primary_request.requested_quantity,
+            "requested_quantity_units": primary_request.requested_quantity * pack_quantity,
             "fulfilled_quantity": primary_request.fulfilled_quantity,
+            "fulfilled_quantity_units": primary_request.fulfilled_quantity * pack_quantity,
             "status_display": primary_request.get_status_display(),
         }
         return render(
@@ -1704,11 +1802,13 @@ def supplier_reorder_response_view(request, token):
 
                     if reorder.remaining_quantity > 0:
                         should_escalate_ids.append(reorder.id)
+                    pack_quantity = max(int(locked_req.reorder_request.product.pack_quantity or 1), 1)
                     for branch_name, branch_qty in confirmed_branch_allocations:
                         confirmed_branch_product_map.setdefault(branch_name, []).append(
                             {
                                 "product_name": locked_req.reorder_request.product.name,
                                 "quantity": branch_qty,
+                                "quantity_units": branch_qty * pack_quantity,
                             }
                         )
 
