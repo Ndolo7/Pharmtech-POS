@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.test import TestCase
@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from accounts.models import User
 from branches.models import Branch
-from products.models import AutoReorderRequest, Product, Purchase, PurchaseItem, Supplier
+from products.models import AutoReorderRequest, Product, Purchase, PurchaseItem, Supplier, SupplierReorderRequest
 from sales.models import Sale, SaleItem
 
 
@@ -131,6 +131,112 @@ class ReportsBranchScopeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f"ORD-{wendani_order.id}")
         self.assertNotContains(response, f"ORD-{sukari_order.id}")
+
+    def test_orders_report_keeps_rejected_supplier_orders_out_of_main_tab(self):
+        product = Product.objects.create(
+            name="Rejected Trail Product",
+            barcode="ORD-REJECT-001",
+            description="",
+            unit_price=Decimal("100.00"),
+            cost_price=Decimal("50.00"),
+            reorder_level=5,
+            max_stock=20,
+            pack_quantity=1,
+            is_active=True,
+        )
+        healthy_order = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=20,
+            current_stock_snapshot=2,
+            requested_quantity=10,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            branch_requirements={self.wendani.name: 10},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        rejected_order = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=20,
+            current_stock_snapshot=1,
+            requested_quantity=8,
+            remaining_quantity=8,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={self.wendani.name: 8},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        SupplierReorderRequest.objects.create(
+            reorder_request=rejected_order,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=8,
+            fulfilled_quantity=0,
+            status=SupplierReorderRequest.STATUS_REJECTED,
+            expires_at=timezone.now() + timedelta(hours=1),
+            responded_at=timezone.now(),
+        )
+        AutoReorderRequest.objects.filter(pk=healthy_order.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 7, 0, 0))
+        )
+        AutoReorderRequest.objects.filter(pk=rejected_order.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 8, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("orders-report"),
+            {"start_date": "2026-04-15", "end_date": "2026-04-15"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f"ORD-{healthy_order.id}")
+        self.assertNotContains(response, f"ORD-{rejected_order.id}")
+
+    def test_orders_report_failed_tab_shows_rejected_orders(self):
+        product = Product.objects.create(
+            name="Rejected Tab Product",
+            barcode="ORD-REJECT-002",
+            description="",
+            unit_price=Decimal("120.00"),
+            cost_price=Decimal("70.00"),
+            reorder_level=5,
+            max_stock=20,
+            pack_quantity=1,
+            is_active=True,
+        )
+        rejected_order = AutoReorderRequest.objects.create(
+            product=product,
+            target_stock_level=20,
+            current_stock_snapshot=1,
+            requested_quantity=6,
+            remaining_quantity=6,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={self.wendani.name: 6},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        SupplierReorderRequest.objects.create(
+            reorder_request=rejected_order,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=6,
+            fulfilled_quantity=0,
+            status=SupplierReorderRequest.STATUS_REJECTED,
+            expires_at=timezone.now() + timedelta(hours=1),
+            responded_at=timezone.now(),
+        )
+        AutoReorderRequest.objects.filter(pk=rejected_order.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("orders-report"),
+            {"start_date": "2026-04-15", "end_date": "2026-04-15", "tab": "failed"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Failed Orders")
+        self.assertContains(response, f"ORD-{rejected_order.id}")
+        self.assertContains(response, 'style="background:#fff1f2;"')
 
     def test_shift_report_shows_empty_state_when_no_rows(self):
         self.client.force_login(self.super_admin)

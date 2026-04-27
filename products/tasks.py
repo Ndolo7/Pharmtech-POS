@@ -91,6 +91,37 @@ def _packets_needed(deficit_units: int, pack_quantity: int) -> int:
     return int(ceil(safe_deficit / float(safe_pack_quantity)))
 
 
+def _auto_reorder_target_units(max_stock_units: int, current_stock_units: int, pack_quantity: int) -> int:
+    """Return reorder target units when low-stock trigger is active.
+
+    Business rule:
+    - pack_quantity > 1: reorder full max stock quantity.
+    - pack_quantity == 1: reorder only deficit to max stock.
+    """
+    safe_pack_quantity = max(int(pack_quantity or 1), 1)
+    safe_max_stock = max(int(max_stock_units or 1), 1)
+    safe_current_stock = max(int(current_stock_units or 0), 0)
+
+    if safe_pack_quantity > 1:
+        return safe_max_stock
+    return max(safe_max_stock - safe_current_stock, 0)
+
+
+def _should_send_supplier_reorder_sms(supplier_request: SupplierReorderRequest, now=None) -> bool:
+    reference_time = now or timezone.now()
+    first_live_request_id = (
+        SupplierReorderRequest.objects.filter(
+            supplier_id=supplier_request.supplier_id,
+            status=SupplierReorderRequest.STATUS_PENDING,
+            expires_at__gt=reference_time,
+        )
+        .order_by("created_at", "id")
+        .values_list("id", flat=True)
+        .first()
+    )
+    return bool(first_live_request_id == supplier_request.id)
+
+
 def _sanitize_filename_fragment(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value or "").strip("_") or "purchase"
 
@@ -345,6 +376,7 @@ def scan_low_stock_and_trigger_reorders():
 
     now = timezone.now()
     now_local = timezone.localtime(now)
+    yesterday_local_date = (now_local - timedelta(days=1)).date()
     if getattr(settings, "AUTO_ORDER_ENFORCE_APPOINTED_WINDOW", True) and not _is_appointed_scan_time(now_local):
         logger.info(
             "Skipping auto-reorder scan outside appointed schedule window",
@@ -359,7 +391,11 @@ def scan_low_stock_and_trigger_reorders():
     active_branch_by_id = {branch.id: branch for branch in active_branches}
     sold_branches_by_product = defaultdict(set)
     sold_product_branch_pairs = (
-        SaleItem.objects.filter(product__is_active=True, sale__branch__is_active=True)
+        SaleItem.objects.filter(
+            product__is_active=True,
+            sale__branch__is_active=True,
+            sale__created_at__date=yesterday_local_date,
+        )
         .values_list("product_id", "sale__branch_id")
         .distinct()
     )
@@ -408,8 +444,12 @@ def scan_low_stock_and_trigger_reorders():
                 continue
             branch_stock = stock_by_branch_id.get(branch_id, 0)
             if branch_stock <= reorder_level:
-                deficit = max(max_stock - branch_stock, 0)
-                packets = _packets_needed(deficit, pack_quantity)
+                target_units = _auto_reorder_target_units(
+                    max_stock_units=max_stock,
+                    current_stock_units=branch_stock,
+                    pack_quantity=pack_quantity,
+                )
+                packets = _packets_needed(target_units, pack_quantity)
                 if packets > 0:
                     total_packets += packets
                     branch_requirements[branch.name] = packets
@@ -572,19 +612,22 @@ def notify_next_supplier(reorder_request_id: int):
         notify_next_supplier.delay(reorder_request_id)
         return {"status": "email_failed", "supplier_request_id": supplier_request.id}
 
-    sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
-    sms_status = sms_outcome.get("status")
-    if sms_status == "sms_failed":
-        logger.warning(
-            "Immediate reorder request SMS failed; queued retry task",
-            extra={
-                "supplier_request_id": supplier_request.id,
-                "reason": sms_outcome.get("reason"),
-                "sms_result": sms_outcome.get("sms_result"),
-            },
-        )
-        send_supplier_reorder_sms.delay(supplier_request.id)
-        sms_status = "queued_retry"
+    if _should_send_supplier_reorder_sms(supplier_request, now=timezone.now()):
+        sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
+        sms_status = sms_outcome.get("status")
+        if sms_status == "sms_failed":
+            logger.warning(
+                "Immediate reorder request SMS failed; queued retry task",
+                extra={
+                    "supplier_request_id": supplier_request.id,
+                    "reason": sms_outcome.get("reason"),
+                    "sms_result": sms_outcome.get("sms_result"),
+                },
+            )
+            send_supplier_reorder_sms.delay(supplier_request.id)
+            sms_status = "queued_retry"
+    else:
+        sms_status = "skipped_existing_pending_supplier_notification"
 
     SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
     expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)

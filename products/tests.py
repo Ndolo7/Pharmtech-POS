@@ -27,6 +27,7 @@ from products.scheduling import (
     sync_auto_order_periodic_task,
 )
 from products.tasks import (
+    notify_next_supplier,
     scan_low_stock_and_trigger_reorders,
     send_batched_exhaustion_alerts,
     send_purchase_confirmation_sms,
@@ -60,7 +61,7 @@ class AutoReorderScanTests(TestCase):
         )
         self._receipt_counter = 0
 
-    def _mark_product_as_sold(self, product, branch=None, quantity=1):
+    def _mark_product_as_sold(self, product, branch=None, quantity=1, days_ago=1):
         branch = branch or self.wendani
         self._receipt_counter += 1
         sale = Sale.objects.create(
@@ -80,6 +81,8 @@ class AutoReorderScanTests(TestCase):
             unit_price=product.unit_price,
             total_price=Decimal(product.unit_price) * quantity,
         )
+        sale_time = timezone.now() - timedelta(days=max(int(days_ago), 0))
+        Sale.objects.filter(pk=sale.pk).update(created_at=sale_time)
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_uses_ceil_for_packet_calculation(self, _notify_delay):
@@ -124,6 +127,48 @@ class AutoReorderScanTests(TestCase):
         reorder = AutoReorderRequest.objects.get(product=product)
         self.assertEqual(reorder.requested_quantity, 2)
         self.assertEqual(reorder.branch_requirements, {"Wendani": 2})
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_pack_quantity_above_one_orders_full_max_stock_quantity(self, _notify_delay):
+        product = Product.objects.create(
+            name="Pack Governed Item",
+            barcode="TEST-PACK-RULE-001",
+            unit_price=Decimal("30.00"),
+            cost_price=Decimal("18.00"),
+            reorder_level=10,
+            max_stock=100,
+            pack_quantity=28,
+            is_active=True,
+        )
+        Stock.objects.create(product=product, branch=self.wendani, quantity=10)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1)
+
+        scan_low_stock_and_trigger_reorders()
+
+        reorder = AutoReorderRequest.objects.get(product=product)
+        self.assertEqual(reorder.requested_quantity, 4)
+        self.assertEqual(reorder.branch_requirements, {"Wendani": 4})
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_pack_quantity_one_orders_deficit_only(self, _notify_delay):
+        product = Product.objects.create(
+            name="Single Unit Pack Item",
+            barcode="TEST-PACK-RULE-002",
+            unit_price=Decimal("30.00"),
+            cost_price=Decimal("18.00"),
+            reorder_level=2,
+            max_stock=5,
+            pack_quantity=1,
+            is_active=True,
+        )
+        Stock.objects.create(product=product, branch=self.wendani, quantity=2)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1)
+
+        scan_low_stock_and_trigger_reorders()
+
+        reorder = AutoReorderRequest.objects.get(product=product)
+        self.assertEqual(reorder.requested_quantity, 3)
+        self.assertEqual(reorder.branch_requirements, {"Wendani": 3})
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_does_not_overwrite_open_manual_reorders(self, _notify_delay):
@@ -229,6 +274,33 @@ class AutoReorderScanTests(TestCase):
         self.assertEqual(sold_reorder.branch_requirements, {"Wendani": 5})
         self.assertGreaterEqual(result.get("cancelled_unsold", 0), 1)
         notify_delay.assert_called_once()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_only_considers_products_sold_yesterday(self, notify_delay):
+        product = Product.objects.create(
+            name="Not Sold Yesterday Item",
+            barcode="TEST-YESTERDAY-001",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("7.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        Stock.objects.create(product=product, branch=self.wendani, quantity=0)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1, days_ago=2)
+
+        result = scan_low_stock_and_trigger_reorders()
+
+        self.assertEqual(result.get("created"), 0)
+        self.assertFalse(
+            AutoReorderRequest.objects.filter(
+                product=product,
+                origin=AutoReorderRequest.ORIGIN_AUTO,
+                status=AutoReorderRequest.STATUS_OPEN,
+            ).exists()
+        )
+        notify_delay.assert_not_called()
 
 
 class AutoOrderScheduleSyncTests(TestCase):
@@ -576,9 +648,9 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertContains(response, "Feedback received successfully. Thank you for your response.")
         self.assertContains(response, "Confirmed Supply Summary")
         self.assertContains(response, "Wendani")
-        self.assertContains(response, "Confirmed Branch Item: 3 packet(s)")
+        self.assertContains(response, "Confirmed Branch Item: 3 unit(s)")
         self.assertContains(response, "Sukari")
-        self.assertContains(response, "Confirmed Branch Item: 3 packet(s)")
+        self.assertContains(response, "Confirmed Branch Item: 3 unit(s)")
 
     @patch("products.views.notify_next_supplier.delay")
     def test_used_link_still_shows_confirmed_product_in_read_only_mode(self, _notify_delay):
@@ -673,6 +745,82 @@ class SupplierReorderResponseViewTests(TestCase):
         self.assertEqual(supplier_request.status, SupplierReorderRequest.STATUS_PARTIAL)
         self.assertEqual(supplier_request.fulfilled_quantity, 4)
         self.assertEqual(reorder.remaining_quantity, 6)
+
+
+class NotifyNextSupplierSmsDedupTests(TestCase):
+    def setUp(self):
+        self.supplier = Supplier.objects.create(
+            name="Grouped SMS Supplier",
+            contact_person="Batch Contact",
+            phone_number="254700000777",
+            email="grouped-sms@example.com",
+            address="Nairobi",
+            priority=1,
+        )
+        self.product_one = Product.objects.create(
+            name="Grouped SMS Product One",
+            barcode="NOTIFY-SMS-001",
+            unit_price=Decimal("20.00"),
+            cost_price=Decimal("10.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        self.product_two = Product.objects.create(
+            name="Grouped SMS Product Two",
+            barcode="NOTIFY-SMS-002",
+            unit_price=Decimal("40.00"),
+            cost_price=Decimal("25.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        self.reorder_one = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        self.reorder_two = AutoReorderRequest.objects.create(
+            product=self.product_two,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Sukari": 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+    @patch("products.tasks.expire_supplier_request.apply_async")
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_notify_next_supplier_sends_only_one_sms_per_supplier(self, send_mail_mock, send_sms_mock, _expire_async):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        first_result = notify_next_supplier(self.reorder_one.id)
+        second_result = notify_next_supplier(self.reorder_two.id)
+
+        self.assertEqual(first_result.get("status"), "email_sent")
+        self.assertEqual(first_result.get("sms_status"), "sms_sent")
+        self.assertEqual(second_result.get("status"), "email_sent")
+        self.assertEqual(second_result.get("sms_status"), "skipped_existing_pending_supplier_notification")
+        self.assertEqual(send_mail_mock.call_count, 2)
+        send_sms_mock.assert_called_once()
+        self.assertEqual(
+            SupplierReorderRequest.objects.filter(
+                supplier=self.supplier,
+                status=SupplierReorderRequest.STATUS_PENDING,
+            ).count(),
+            2,
+        )
 
 
 class ExhaustionAlertTaskTests(TestCase):
@@ -922,6 +1070,41 @@ class ReceiveStockPricingValidationTests(TestCase):
             expires_at=timezone.now() + timedelta(hours=1),
         )
         self.client.force_login(self.user)
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_receive_stock_accepts_all_zero_quantities(self, notify_delay):
+        response = self.client.post(
+            reverse("receive-stock"),
+            data={
+                "supplier_id": str(self.supplier.id),
+                "invoice_number": "INV-ZERO-RECEIVE",
+                "reorder_request_id[]": [str(self.supplier_request.id)],
+                "quantity[]": ["0"],
+                "cost_price[]": ["90.00"],
+                "selling_price[]": ["120.00"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("stock-action-success", response.headers.get("HX-Trigger", ""))
+        self.assertEqual(Purchase.objects.count(), 0)
+        self.supplier_request.refresh_from_db()
+        self.reorder.refresh_from_db()
+        self.assertEqual(self.supplier_request.status, SupplierReorderRequest.STATUS_REJECTED)
+        self.assertEqual(self.supplier_request.fulfilled_quantity, 0)
+        self.assertEqual(self.supplier_request.received_quantity, 0)
+        self.assertEqual(self.reorder.status, AutoReorderRequest.STATUS_OPEN)
+        self.assertEqual(self.reorder.remaining_quantity, self.reorder.requested_quantity)
+        notify_delay.assert_called_once_with(self.reorder.id)
+
+        pending_response = self.client.get(
+            reverse("supplier-pending-orders"),
+            data={"supplier_id": str(self.supplier.id), "branch_id": str(self.branch.id)},
+        )
+        self.assertEqual(pending_response.status_code, 200)
+        self.assertContains(pending_response, "No accepted pending orders found for this supplier.")
+        self.assertNotContains(pending_response, self.product.name)
 
     def test_receive_stock_rejects_price_below_33_percent_margin(self):
         response = self.client.post(

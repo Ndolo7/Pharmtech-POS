@@ -12,6 +12,7 @@
       hx-swap="innerHTML"
       class="flex gap-3 items-center"
     >
+      <input type="hidden" name="tab" value="{{ tab|default:'main' }}">
       <div class="form-group" style="margin:0">
         <input type="date" name="start_date" class="form-input" value="{{ start_date }}" required>
       </div>
