@@ -107,7 +107,7 @@ def _auto_reorder_target_units(max_stock_units: int, current_stock_units: int, p
     return max(safe_max_stock - safe_current_stock, 0)
 
 
-def _should_send_supplier_reorder_sms(supplier_request: SupplierReorderRequest, now=None) -> bool:
+def _is_primary_live_supplier_request(supplier_request: SupplierReorderRequest, now=None) -> bool:
     reference_time = now or timezone.now()
     first_live_request_id = (
         SupplierReorderRequest.objects.filter(
@@ -120,6 +120,16 @@ def _should_send_supplier_reorder_sms(supplier_request: SupplierReorderRequest, 
         .first()
     )
     return bool(first_live_request_id == supplier_request.id)
+
+
+def _has_auto_notification_sent_today_for_supplier(supplier_id: int, now=None) -> bool:
+    reference_time = now or timezone.now()
+    today_local = timezone.localdate(reference_time)
+    return SupplierReorderRequest.objects.filter(
+        supplier_id=supplier_id,
+        reorder_request__origin=AutoReorderRequest.ORIGIN_AUTO,
+        emailed_at__date=today_local,
+    ).exists()
 
 
 def _sanitize_filename_fragment(value: str) -> str:
@@ -591,6 +601,28 @@ def notify_next_supplier(reorder_request_id: int):
 
     response_link = _supplier_reorder_response_link(supplier_request)
     message = _supplier_reorder_message_text(supplier_request, response_link)
+    reference_now = timezone.now()
+    is_manual_reorder = supplier_request.reorder_request.origin == AutoReorderRequest.ORIGIN_MANUAL
+    is_primary_live_request = _is_primary_live_supplier_request(supplier_request, now=reference_now)
+
+    if not is_manual_reorder and not is_primary_live_request:
+        expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
+        return {
+            "status": "notification_suppressed_existing_pending_supplier",
+            "supplier_request_id": supplier_request.id,
+            "sms_status": "skipped_existing_pending_supplier_notification",
+        }
+
+    if not is_manual_reorder and _has_auto_notification_sent_today_for_supplier(
+        supplier_request.supplier_id,
+        now=reference_now,
+    ):
+        expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
+        return {
+            "status": "notification_suppressed_daily_limit",
+            "supplier_request_id": supplier_request.id,
+            "sms_status": "skipped_existing_pending_supplier_notification",
+        }
 
     try:
         send_mail(
@@ -612,22 +644,19 @@ def notify_next_supplier(reorder_request_id: int):
         notify_next_supplier.delay(reorder_request_id)
         return {"status": "email_failed", "supplier_request_id": supplier_request.id}
 
-    if _should_send_supplier_reorder_sms(supplier_request, now=timezone.now()):
-        sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
-        sms_status = sms_outcome.get("status")
-        if sms_status == "sms_failed":
-            logger.warning(
-                "Immediate reorder request SMS failed; queued retry task",
-                extra={
-                    "supplier_request_id": supplier_request.id,
-                    "reason": sms_outcome.get("reason"),
-                    "sms_result": sms_outcome.get("sms_result"),
-                },
-            )
-            send_supplier_reorder_sms.delay(supplier_request.id)
-            sms_status = "queued_retry"
-    else:
-        sms_status = "skipped_existing_pending_supplier_notification"
+    sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
+    sms_status = sms_outcome.get("status")
+    if sms_status == "sms_failed":
+        logger.warning(
+            "Immediate reorder request SMS failed; queued retry task",
+            extra={
+                "supplier_request_id": supplier_request.id,
+                "reason": sms_outcome.get("reason"),
+                "sms_result": sms_outcome.get("sms_result"),
+            },
+        )
+        send_supplier_reorder_sms.delay(supplier_request.id)
+        sms_status = "queued_retry"
 
     SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
     expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)

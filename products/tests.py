@@ -801,7 +801,7 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
     @patch("products.tasks.expire_supplier_request.apply_async")
     @patch("products.tasks.send_sms_via_leopard")
     @patch("products.tasks.send_mail")
-    def test_notify_next_supplier_sends_only_one_sms_per_supplier(self, send_mail_mock, send_sms_mock, _expire_async):
+    def test_notify_next_supplier_sends_only_one_email_and_sms_per_supplier(self, send_mail_mock, send_sms_mock, _expire_async):
         send_mail_mock.return_value = 1
         send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
 
@@ -810,9 +810,9 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
 
         self.assertEqual(first_result.get("status"), "email_sent")
         self.assertEqual(first_result.get("sms_status"), "sms_sent")
-        self.assertEqual(second_result.get("status"), "email_sent")
+        self.assertEqual(second_result.get("status"), "notification_suppressed_existing_pending_supplier")
         self.assertEqual(second_result.get("sms_status"), "skipped_existing_pending_supplier_notification")
-        self.assertEqual(send_mail_mock.call_count, 2)
+        send_mail_mock.assert_called_once()
         send_sms_mock.assert_called_once()
         self.assertEqual(
             SupplierReorderRequest.objects.filter(
@@ -822,6 +822,91 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
             2,
         )
 
+    @patch("products.tasks.expire_supplier_request.apply_async")
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_notify_next_supplier_suppresses_second_auto_notification_same_day(self, send_mail_mock, send_sms_mock, _expire_async):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        first_result = notify_next_supplier(self.reorder_one.id)
+        SupplierReorderRequest.objects.filter(reorder_request=self.reorder_one).update(
+            status=SupplierReorderRequest.STATUS_ACCEPTED,
+            fulfilled_quantity=5,
+            responded_at=timezone.now(),
+        )
+
+        auto_reorder_three = AutoReorderRequest.objects.create(
+            product=Product.objects.create(
+                name="Grouped SMS Product Three",
+                barcode="NOTIFY-SMS-003",
+                unit_price=Decimal("60.00"),
+                cost_price=Decimal("30.00"),
+                reorder_level=5,
+                max_stock=50,
+                pack_quantity=10,
+                is_active=True,
+            ),
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Kahawa": 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        second_result = notify_next_supplier(auto_reorder_three.id)
+
+        self.assertEqual(first_result.get("status"), "email_sent")
+        self.assertEqual(second_result.get("status"), "notification_suppressed_daily_limit")
+        send_mail_mock.assert_called_once()
+        send_sms_mock.assert_called_once()
+
+    @patch("products.tasks.expire_supplier_request.apply_async")
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_notify_next_supplier_manual_order_is_exempt_from_daily_auto_limit(self, send_mail_mock, send_sms_mock, _expire_async):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        historical_auto_reorder = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=0,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 5},
+            status=AutoReorderRequest.STATUS_FULFILLED,
+        )
+        SupplierReorderRequest.objects.create(
+            reorder_request=historical_auto_reorder,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=5,
+            fulfilled_quantity=5,
+            status=SupplierReorderRequest.STATUS_ACCEPTED,
+            expires_at=timezone.now() - timedelta(hours=1),
+            emailed_at=timezone.now(),
+            responded_at=timezone.now(),
+        )
+
+        manual_reorder = AutoReorderRequest.objects.create(
+            product=self.product_two,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            branch_requirements={"Sukari": 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        result = notify_next_supplier(manual_reorder.id)
+
+        self.assertEqual(result.get("status"), "email_sent")
+        self.assertEqual(result.get("sms_status"), "sms_sent")
+        send_mail_mock.assert_called_once()
+        send_sms_mock.assert_called_once()
 
 class ExhaustionAlertTaskTests(TestCase):
     def setUp(self):
