@@ -7,6 +7,7 @@ from math import ceil
 from pathlib import Path
 
 from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 from branches.models import Branch
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -818,7 +819,22 @@ def send_supplier_reorder_sms(self, supplier_request_id: int):
         },
     )
     retry_delay_seconds = min(300, 60 * (2 ** max(self.request.retries, 0)))
-    raise self.retry(countdown=retry_delay_seconds)
+    try:
+        raise self.retry(countdown=retry_delay_seconds)
+    except MaxRetriesExceededError:
+        logger.error(
+            "Reorder request SMS retries exhausted",
+            extra={
+                "supplier_request_id": supplier_request.id,
+                "reason": sms_outcome.get("reason"),
+                "sms_result": sms_outcome.get("sms_result"),
+            },
+        )
+        return {
+            "status": "sms_failed",
+            "supplier_request_id": supplier_request.id,
+            "reason": sms_outcome.get("reason") or "max_retries_exceeded",
+        }
 
 
 @shared_task
@@ -911,4 +927,19 @@ def send_purchase_confirmation_sms(self, purchase_id: int):
         },
     )
     retry_delay_seconds = min(300, 60 * (2 ** max(self.request.retries, 0)))
-    raise self.retry(countdown=retry_delay_seconds)
+    try:
+        raise self.retry(countdown=retry_delay_seconds)
+    except MaxRetriesExceededError:
+        logger.error(
+            "Purchase confirmation SMS retries exhausted",
+            extra={
+                "purchase_id": purchase.id,
+                "reason": sms_outcome.get("reason"),
+                "sms_result": sms_outcome.get("sms_result"),
+            },
+        )
+        return {
+            "status": "sms_failed",
+            "purchase_id": purchase.id,
+            "reason": sms_outcome.get("reason") or "max_retries_exceeded",
+        }

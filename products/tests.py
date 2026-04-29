@@ -2,7 +2,7 @@ from decimal import Decimal
 from datetime import time as dt_time, timedelta
 from unittest.mock import patch
 
-from celery.exceptions import Retry
+from celery.exceptions import MaxRetriesExceededError, Retry
 from django.conf import settings
 from django.urls import reverse
 from django.test import TestCase, override_settings
@@ -29,6 +29,7 @@ from products.scheduling import (
 from products.tasks import (
     notify_next_supplier,
     scan_low_stock_and_trigger_reorders,
+    send_supplier_reorder_sms,
     send_batched_exhaustion_alerts,
     send_purchase_confirmation_sms,
     send_purchase_confirmation_to_supplier,
@@ -908,6 +909,25 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
         send_mail_mock.assert_called_once()
         send_sms_mock.assert_called_once()
 
+    @patch("products.tasks.send_supplier_reorder_sms.retry")
+    @patch("products.tasks.send_sms_via_leopard")
+    def test_send_supplier_reorder_sms_returns_failed_when_retries_exhausted(self, send_sms_mock, retry_mock):
+        send_sms_mock.return_value = {"success": False, "reason": "request_error"}
+        retry_mock.side_effect = MaxRetriesExceededError("retry cap hit")
+
+        supplier_request = SupplierReorderRequest.objects.create(
+            reorder_request=self.reorder_one,
+            supplier=self.supplier,
+            priority=1,
+            requested_quantity=5,
+            status=SupplierReorderRequest.STATUS_PENDING,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        result = send_supplier_reorder_sms(supplier_request.id)
+
+        self.assertEqual(result.get("status"), "sms_failed")
+        self.assertEqual(result.get("supplier_request_id"), supplier_request.id)
+
 class ExhaustionAlertTaskTests(TestCase):
     def setUp(self):
         self.supplier = Supplier.objects.create(
@@ -1491,6 +1511,17 @@ class PurchaseConfirmationTaskTests(TestCase):
         sms_send.return_value = {"success": False, "reason": "request_error"}
         with self.assertRaises(Retry):
             send_purchase_confirmation_sms(self.purchase.id)
+
+    @patch("products.tasks.send_purchase_confirmation_sms.retry")
+    @patch("products.tasks.send_sms_via_leopard")
+    def test_send_purchase_confirmation_sms_returns_failed_when_retries_exhausted(self, sms_send, retry_mock):
+        sms_send.return_value = {"success": False, "reason": "request_error"}
+        retry_mock.side_effect = MaxRetriesExceededError("retry cap hit")
+
+        result = send_purchase_confirmation_sms(self.purchase.id)
+
+        self.assertEqual(result["status"], "sms_failed")
+        self.assertEqual(result["purchase_id"], self.purchase.id)
 
     @patch("products.tasks.send_sms_via_leopard")
     def test_send_purchase_confirmation_sms_skips_when_not_configured(self, sms_send):
