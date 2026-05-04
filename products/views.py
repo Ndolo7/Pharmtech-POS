@@ -473,6 +473,11 @@ def _can_manage_catalog(user):
     return user.is_superuser or user.is_staff or user.can_manage_users()
 
 
+def _can_manage_suppliers(user):
+    """Only super admin role can create, edit, or delete suppliers."""
+    return user.is_superuser or getattr(user, "role", "") == "super_admin"
+
+
 def _can_select_products_branch(user):
     return user.is_superuser or getattr(user, "role", "") == "super_admin"
 
@@ -1493,8 +1498,13 @@ def supplier_list_view(request):
         messages.error(request, "Permission denied.")
         return redirect("dashboard")
 
+    can_edit_suppliers = _can_manage_suppliers(request.user)
     suppliers = Supplier.objects.order_by("name")
-    ctx = {"suppliers": suppliers, "form": SupplierForm()}
+    ctx = {
+        "suppliers": suppliers,
+        "form": SupplierForm(),
+        "can_edit_suppliers": can_edit_suppliers,
+    }
 
     if request.htmx:
         return render(request, "products/partials/_supplier_table.html", ctx)
@@ -1503,9 +1513,9 @@ def supplier_list_view(request):
 
 @login_required
 def supplier_create_view(request):
-    if not _can_manage_catalog(request.user):
-        messages.error(request, "Permission denied.")
-        return redirect("dashboard")
+    if not _can_manage_suppliers(request.user):
+        messages.error(request, "Permission denied. Only Super Admins can add suppliers.")
+        return redirect("supplier-list")
 
     if request.method == "POST":
         form = SupplierForm(request.POST)
@@ -1513,7 +1523,11 @@ def supplier_create_view(request):
             form.save()
             messages.success(request, "Supplier created successfully.")
             suppliers = Supplier.objects.order_by("name")
-            return render(request, "products/partials/_supplier_table.html", {"suppliers": suppliers})
+            return render(
+                request,
+                "products/partials/_supplier_table.html",
+                {"suppliers": suppliers, "can_edit_suppliers": True},
+            )
         return render(request, "products/partials/_supplier_form.html", {"form": form})
 
     return render(request, "products/partials/_supplier_form.html", {"form": SupplierForm()})
@@ -1521,9 +1535,9 @@ def supplier_create_view(request):
 
 @login_required
 def supplier_edit_view(request, pk):
-    if not _can_manage_catalog(request.user):
-        messages.error(request, "Permission denied.")
-        return redirect("dashboard")
+    if not _can_manage_suppliers(request.user):
+        messages.error(request, "Permission denied. Only Super Admins can edit suppliers.")
+        return redirect("supplier-list")
 
     supplier = get_object_or_404(Supplier, pk=pk)
     if request.method == "POST":
@@ -1532,10 +1546,45 @@ def supplier_edit_view(request, pk):
             form.save()
             messages.success(request, "Supplier updated.")
             suppliers = Supplier.objects.order_by("name")
-            return render(request, "products/partials/_supplier_table.html", {"suppliers": suppliers})
+            return render(
+                request,
+                "products/partials/_supplier_table.html",
+                {"suppliers": suppliers, "can_edit_suppliers": True},
+            )
         return render(request, "products/partials/_supplier_form.html", {"form": form, "supplier": supplier})
 
-    return render(request, "products/partials/_supplier_form.html", {"form": SupplierForm(instance=supplier), "supplier": supplier})
+    return render(
+        request,
+        "products/partials/_supplier_form.html",
+        {"form": SupplierForm(instance=supplier), "supplier": supplier},
+    )
+
+
+@login_required
+def supplier_delete_view(request, pk):
+    if not _can_manage_suppliers(request.user):
+        messages.error(request, "Permission denied. Only Super Admins can delete suppliers.")
+        return redirect("supplier-list")
+
+    supplier = get_object_or_404(Supplier, pk=pk)
+
+    if request.method == "POST":
+        supplier_name = supplier.name
+        supplier.delete()
+        messages.success(request, f"Supplier '{supplier_name}' deleted successfully.")
+        suppliers = Supplier.objects.order_by("name")
+        return render(
+            request,
+            "products/partials/_supplier_table.html",
+            {"suppliers": suppliers, "can_edit_suppliers": True},
+        )
+
+    # GET — render confirmation modal
+    return render(
+        request,
+        "products/partials/_supplier_delete_confirm.html",
+        {"supplier": supplier},
+    )
 
 
 @login_required
