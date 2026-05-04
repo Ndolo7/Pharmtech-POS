@@ -11,12 +11,14 @@
       Prioritize Suppliers
     </a>
   </div>
+  {% if can_edit_suppliers %}
   <button class="btn btn-primary"
     hx-get="{% url 'supplier-create' %}"
     hx-target="#modal-container"
     hx-swap="innerHTML">
     + Add Supplier
   </button>
+  {% endif %}
 </div>
 
 <div class="card">

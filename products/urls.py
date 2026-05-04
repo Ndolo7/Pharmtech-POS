@@ -21,6 +21,7 @@ urlpatterns = [
     path("suppliers/create/", views.supplier_create_view, name="supplier-create"),
     path("suppliers/prioritize/", views.supplier_prioritize_view, name="supplier-prioritize"),
     path("suppliers/<int:pk>/edit/", views.supplier_edit_view, name="supplier-edit"),
+    path("suppliers/<int:pk>/delete/", views.supplier_delete_view, name="supplier-delete"),
     path("categories/", views.category_list_view, name="category-list"),
     path("categories/create/", views.category_create_view, name="category-create"),
     path("categories/<int:pk>/edit/", views.category_edit_view, name="category-edit"),
