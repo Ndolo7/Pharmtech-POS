@@ -1,0 +1,28 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h3>Delete Supplier</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:16px">
+        Are you sure you want to delete <strong>{{ supplier.name }}</strong>?
+        This action cannot be undone and will remove all associated supplier data.
+      </p>
+      <div class="message message-error" style="margin-bottom:16px">
+        ⚠️ Warning: deleting a supplier may affect existing reorder records that reference this supplier.
+      </div>
+      <form method="post"
+        hx-post="{% url 'supplier-delete' supplier.pk %}"
+        hx-target="#supplier-table-container"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''">
+        {% csrf_token %}
+        <div class="modal-footer" style="padding:0;margin-top:8px">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
+          <button type="submit" class="btn btn-danger">Yes, Delete Supplier</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
