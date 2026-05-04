@@ -19,12 +19,24 @@
         <td>{{ supplier.email|default:"-" }}</td>
         <td>{{ supplier.address|default:"-" }}</td>
         <td>
-          <button class="btn btn-sm btn-outline"
-            hx-get="{% url 'supplier-edit' supplier.pk %}"
-            hx-target="#modal-container"
-            hx-swap="innerHTML">
-            Edit
-          </button>
+          {% if can_edit_suppliers %}
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-outline"
+              hx-get="{% url 'supplier-edit' supplier.pk %}"
+              hx-target="#modal-container"
+              hx-swap="innerHTML">
+              Edit
+            </button>
+            <button class="btn btn-sm btn-danger"
+              hx-get="{% url 'supplier-delete' supplier.pk %}"
+              hx-target="#modal-container"
+              hx-swap="innerHTML">
+              Delete
+            </button>
+          </div>
+          {% else %}
+          <span class="text-muted text-sm">View only</span>
+          {% endif %}
         </td>
       </tr>
       {% empty %}
