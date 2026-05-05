@@ -971,7 +971,7 @@ def adjust_stock_view(request, pk):
     product = get_object_or_404(Product, pk=pk)
     branch = _resolve_products_branch(request)
 
-    if not request.user.can_adjust_stock():
+    if not request.user.can_adjust_stock() and not _can_manage_catalog(request.user):
         messages.error(request, "Permission denied.")
         return _rows_oob_response(request, [product], branch=branch) if request.htmx else _redirect_with_branch("stock-list", branch)
 
