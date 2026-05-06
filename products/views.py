@@ -681,6 +681,23 @@ def product_edit_view(request, pk):
 
 
 @login_required
+def product_detail_view(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    active_branch = _resolve_products_branch(request)
+    stock_qty = product.current_stock(active_branch) if active_branch else product.current_stock()
+
+    return render(
+        request,
+        "products/partials/_product_detail.html",
+        {
+            "product": product,
+            "stock": stock_qty,
+            "active_branch": active_branch,
+        },
+    )
+
+
+@login_required
 def receive_stock_view(request):
     if request.user.get_role_display() == "Cashier":
         messages.error(request, "Permission denied.")

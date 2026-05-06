@@ -13,6 +13,7 @@ urlpatterns = [
         name="product-bulk-upload-failed-rows-download",
     ),
     path("<int:pk>/edit/", views.product_edit_view, name="product-edit"),
+    path("<int:pk>/detail/", views.product_detail_view, name="product-detail"),
     path("receive/", views.receive_stock_view, name="receive-stock"),
     path("<int:pk>/adjust/", views.adjust_stock_view, name="adjust-stock"),
     path("transfer/", views.transfer_stock_view, name="transfer-stock"),

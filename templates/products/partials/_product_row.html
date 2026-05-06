@@ -33,6 +33,13 @@
         hx-swap="innerHTML">
         Adjust
       </button>
+      {% else %}
+      <button class="btn btn-sm btn-outline"
+        hx-get="{% url 'product-detail' p.pk %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML">
+        View
+      </button>
       {% endif %}
     </div>
   </td>

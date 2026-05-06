@@ -1,0 +1,59 @@
+<div class="modal-backdrop" x-data @click.self="document.getElementById('modal-container').innerHTML=''">
+  <div class="modal adjust-stock-modal">
+    <div class="modal-header">
+      <h3>Product Details — {{ product.name }}</h3>
+      <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display: flex; gap: 24px; margin-bottom: 20px;">
+        <div style="flex: 1;">
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Barcode</label>
+            <p style="font-weight: 500;">{{ product.barcode|default:"N/A" }}</p>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Unit Price</label>
+            <p style="font-weight: 500;">KES {{ product.unit_price|floatformat:2 }}</p>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Cost Price</label>
+            <p style="font-weight: 500;">KES {{ product.cost_price|floatformat:2 }}</p>
+          </div>
+        </div>
+
+        <div style="flex: 1;">
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Current Stock</label>
+            <p style="font-weight: 700; color: {% if stock <= product.reorder_level %}var(--danger){% else %}var(--success){% endif %};">
+              {{ stock }} units
+            </p>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Reorder Level</label>
+            <p style="font-weight: 500;">{{ product.reorder_level }} units</p>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Max Stock</label>
+            <p style="font-weight: 500;">{{ product.max_stock }} units</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Pack Quantity</label>
+        <p style="font-weight: 500;">{{ product.pack_quantity }}</p>
+      </div>
+
+      {% if product.description %}
+      <div style="padding-top: 16px; border-top: 1px solid var(--gray-100);">
+        <label style="display: block; font-size: 11px; font-weight: 600; color: var(--gray-500); text-transform: uppercase;">Description</label>
+        <p style="font-size: 13px; color: var(--gray-600); margin-top: 4px; line-height: 1.6;">{{ product.description }}</p>
+      </div>
+      {% endif %}
+
+      <div class="modal-footer" style="padding: 0; margin-top: 24px; border: none;">
+        <button class="btn btn-secondary w-full" onclick="document.getElementById('modal-container').innerHTML=''">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
