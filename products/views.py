@@ -470,7 +470,7 @@ def manual_order_create_view(request):
 
 
 def _can_manage_catalog(user):
-    return user.is_superuser or user.is_staff or user.can_manage_users()
+    return user.is_superuser or user.can_manage_users()
 
 
 def _can_manage_suppliers(user):
@@ -483,7 +483,7 @@ def _can_select_products_branch(user):
 
 
 def _can_edit_receive_packets(user):
-    return user.is_superuser or getattr(user, "role", "") == "super_admin"
+    return True
 
 
 def _resolve_products_branch(request):
@@ -627,6 +627,10 @@ def stock_list_view(request):
 
 @login_required
 def product_create_view(request):
+    if not _can_manage_catalog(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect("product-list")
+
     active_branch = _resolve_products_branch(request)
 
     if request.method == "POST":
@@ -651,6 +655,10 @@ def product_create_view(request):
 
 @login_required
 def product_edit_view(request, pk):
+    if not _can_manage_catalog(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect("product-list")
+
     active_branch = _resolve_products_branch(request)
     product = get_object_or_404(Product, pk=pk)
     if request.method == "POST":
