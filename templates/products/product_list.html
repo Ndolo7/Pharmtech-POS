@@ -32,6 +32,7 @@
     <span class="badge badge-primary">Branch: {{ active_branch.name }}</span>
     {% endif %}
   </div>
+  {% if request.user.is_superuser or request.user.role == "super_admin" %}
   <div class="flex gap-2">
     <button class="btn btn-outline"
       hx-get="{% url 'product-bulk-upload' %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
@@ -46,6 +47,7 @@
       + Add Product
     </button>
   </div>
+  {% endif %}
 </div>
 
 {% if bulk_upload_report_available %}

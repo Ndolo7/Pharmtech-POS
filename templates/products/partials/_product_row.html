@@ -20,13 +20,13 @@
   <td>{{ p.pack_quantity }}</td>
   <td>
     <div class="flex gap-2">
+      {% if request.user.is_superuser or request.user.role == "super_admin" %}
       <button class="btn btn-sm btn-outline"
         hx-get="{% url 'product-edit' p.pk %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
         hx-target="#modal-container"
         hx-swap="innerHTML">
         Edit
       </button>
-      {% if request.user.is_superuser or request.user.is_staff or request.user.role == "super_admin" %}
       <button class="btn btn-sm btn-secondary"
         hx-get="{% url 'adjust-stock' p.pk %}{% if active_branch_id %}?branch={{ active_branch_id }}{% endif %}"
         hx-target="#modal-container"
