@@ -231,6 +231,21 @@ body {
   font-size: 26px;
   letter-spacing: -0.3px;
 }
+.receive-grid {
+  display: grid;
+  grid-template-columns: 3fr 1fr 1fr 1fr;
+  gap: 8px;
+}
+.receive-grid-head {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+.receive-cell {
+  min-height: 42px;
+  font-size: 14px;
+}
 .dashboard-quick-card .card-header {
   background: linear-gradient(120deg, #eef4ff 0%, #f7faff 100%);
 }
@@ -679,4 +694,6 @@ tbody tr:last-child td { border-bottom: none; }
   .dashboard-shift-grid { grid-template-columns: 1fr; gap: 12px; }
   .dashboard-home .dashboard-stat-card .value { font-size: 22px; }
   .session-sales-summary { grid-template-columns: 1fr; }
+  .receive-grid { grid-template-columns: 1.7fr 1fr 1fr 1fr; gap: 10px; }
+  .receive-cell { min-height: 50px; font-size: 16px; padding: 12px; }
 }
