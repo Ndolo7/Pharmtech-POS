@@ -17,14 +17,14 @@
           <td>{{ s.date }}</td>
           <td>KES {{ s.expected_cash|floatformat:2 }}</td>
           <td>KES {{ s.declared_cash|floatformat:2 }}</td>
-          <td class="{% if s.cash_variance < 0 %}text-danger{% elif s.cash_variance > 0 %}text-success{% endif %} font-bold">
+          <td class="{% if s.cash_variance > 0 %}text-danger{% elif s.cash_variance < 0 %}text-success{% endif %} font-bold">
             KES {{ s.cash_variance|floatformat:2 }}
           </td>
           <td>KES {{ s.total_expenses|floatformat:2 }}</td>
           <td class="text-sm">{{ s.expense_details|default:"-" }}</td>
           <td>KES {{ s.expected_mpesa|floatformat:2 }}</td>
           <td>KES {{ s.declared_mpesa|floatformat:2 }}</td>
-          <td class="{% if s.mpesa_variance < 0 %}text-danger{% elif s.mpesa_variance > 0 %}text-success{% endif %} font-bold">
+          <td class="{% if s.mpesa_variance > 0 %}text-danger{% elif s.mpesa_variance < 0 %}text-success{% endif %} font-bold">
             KES {{ s.mpesa_variance|floatformat:2 }}
           </td>
         </tr>
