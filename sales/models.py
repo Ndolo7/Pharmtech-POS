@@ -123,11 +123,11 @@ class Shift(models.Model):
     def calculate_variances(self):
         if self.closing_cash_declared is not None:
             expected_cash = self.calculate_expected_cash()
-            self.cash_variance = self.closing_cash_declared - expected_cash
+            self.cash_variance = expected_cash - self.closing_cash_declared
 
         if self.closing_mpesa_declared is not None:
             expected_mpesa = self.calculate_expected_mpesa()
-            self.mpesa_variance = self.closing_mpesa_declared - expected_mpesa
+            self.mpesa_variance = expected_mpesa - self.closing_mpesa_declared
 
 
 class ShiftExpense(models.Model):

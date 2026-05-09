@@ -967,6 +967,7 @@ def receive_stock_view(request):
                     "stock-action-success",
                     {"message": "Stock received successfully."},
                 )
+                # enable below message for supplier confirmation
             # messages.success(request, "Stock received successfully. Supplier Receipt confirmation has been sent.")
             # return _redirect_with_branch("stock-list", active_branch)
 

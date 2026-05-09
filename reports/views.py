@@ -133,6 +133,10 @@ def _build_dashboard_ctx(request):
         total_amount=Sum("total_amount"),
         count=Count("id"),
     )
+    month_purchase_qs = Purchase.objects.filter(created_at__date__gte=month_start)
+    if branch:
+        month_purchase_qs = month_purchase_qs.filter(branch=branch)
+    month_supplier_costs = month_purchase_qs.aggregate(total_amount=Sum("total_amount"))
 
     active_shift = None
     shift_branch = request.user.branch if request.user.branch_id else branch
@@ -154,6 +158,7 @@ def _build_dashboard_ctx(request):
         "today_count": today_sales["count"] or 0,
         "month_total": month_sales["total_amount"] or 0,
         "month_count": month_sales["count"] or 0,
+        "month_supplier_costs": month_supplier_costs["total_amount"] or 0,
         "active_shift": active_shift,
         **branch_ctx,
     }
@@ -186,6 +191,13 @@ def sales_report_view(request):
             total_credit=Sum("credit_amount"),
             count=Count("id"),
         )
+        purchases_qs = Purchase.objects.filter(created_at__date__gte=sd, created_at__date__lte=ed)
+        if active_branch:
+            purchases_qs = purchases_qs.filter(branch=active_branch)
+        total_supplier_purchases = purchases_qs.aggregate(total_amount=Sum("total_amount"))["total_amount"] or Decimal("0.00")
+        total_sales_amount = summary["total_amount"] or Decimal("0.00")
+        summary["total_supplier_purchases"] = total_supplier_purchases
+        summary["gross_profit"] = total_sales_amount - total_supplier_purchases
 
         daily = []
         cur = sd
@@ -197,13 +209,19 @@ def sales_report_view(request):
                 total_credit=Sum("credit_amount"),
                 count=Count("id"),
             )
+            day_supplier_purchases = purchases_qs.filter(created_at__date=cur).aggregate(
+                total_amount=Sum("total_amount")
+            )["total_amount"] or Decimal("0.00")
+            day_sales_amount = day["total_amount"] or Decimal("0.00")
             daily.append({
                 "date": cur.strftime("%d %b %Y"),
                 "date_iso": cur.isoformat(),
-                "total_amount": day["total_amount"] or 0,
+                "total_amount": day_sales_amount,
                 "total_cash": day["total_cash"] or 0,
                 "total_mpesa": day["total_mpesa"] or 0,
                 "total_credit": day["total_credit"] or 0,
+                "supplier_purchases": day_supplier_purchases,
+                "gross_profit": day_sales_amount - day_supplier_purchases,
                 "count": day["count"] or 0,
             })
             cur += timedelta(days=1)

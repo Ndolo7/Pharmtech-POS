@@ -31,6 +31,9 @@
     {% if not can_select_branch and active_branch %}
     <div class="text-muted text-sm mt-2">Showing branch: <strong>{{ active_branch.name }}</strong></div>
     {% endif %}
+    <div class="text-muted text-sm mt-2">
+      Expected Cash = system cash total, Declared Cash = cashier input, Cash Variance = Expected - Declared.
+    </div>
   </div>
 </div>
 <div id="report-results">{% include "reports/partials/_shift_table.html" %}</div>

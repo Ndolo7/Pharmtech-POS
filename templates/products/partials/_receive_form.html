@@ -59,6 +59,17 @@
           </div>
         </div>
 
+        <div id="receive-totals" class="card" style="margin-top:12px;padding:12px;">
+          <div class="flex justify-between items-center" style="margin-bottom:6px;">
+            <span class="text-muted">Total Packets</span>
+            <strong id="receive-total-packets">0</strong>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-muted">Total Supplier Cost</span>
+            <strong id="receive-total-cost">KES 0.00</strong>
+          </div>
+        </div>
+
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
           <button type="submit" id="receive-stock-submit" class="btn btn-success">Receive Stock</button>
@@ -137,7 +148,33 @@
     submitButton.disabled = hasRows ? !allValid : true;
   }
 
+  function updateReceiveTotals() {
+    const rows = document.querySelectorAll("#receive-items .receive-row");
+    const packetsEl = document.getElementById("receive-total-packets");
+    const costEl = document.getElementById("receive-total-cost");
+    if (!packetsEl || !costEl) return;
+
+    let totalPackets = 0;
+    let totalCost = 0;
+
+    rows.forEach((row) => {
+      const qtyInput = row.querySelector('input[name="quantity[]"]');
+      const costInput = row.querySelector('input[name="cost_price[]"]');
+      const qty = toNumber(qtyInput ? qtyInput.value : "");
+      const costPerPacket = toNumber(costInput ? costInput.value : "");
+
+      if (Number.isFinite(qty) && qty > 0) totalPackets += qty;
+      if (Number.isFinite(qty) && qty > 0 && Number.isFinite(costPerPacket) && costPerPacket > 0) {
+        totalCost += qty * costPerPacket;
+      }
+    });
+
+    packetsEl.textContent = totalPackets.toFixed(0);
+    costEl.textContent = `KES ${totalCost.toFixed(2)}`;
+  }
+
   window.validateReceivePricing = validateReceivePricing;
+  window.updateReceiveTotals = updateReceiveTotals;
 
   if (!window.__receivePricingListenersBound) {
     document.addEventListener("input", function(event) {
@@ -147,12 +184,14 @@
         event.target.matches('#receive-items input[name="selling_price[]"]')
       ) {
         validateReceivePricing();
+        updateReceiveTotals();
       }
     });
 
     document.body.addEventListener("htmx:afterSwap", function(event) {
       if (event.target && event.target.id === "receive-items") {
         validateReceivePricing();
+        updateReceiveTotals();
       }
     });
 
@@ -160,5 +199,6 @@
   }
 
   setTimeout(validateReceivePricing, 0);
+  setTimeout(updateReceiveTotals, 0);
 })();
 </script>
