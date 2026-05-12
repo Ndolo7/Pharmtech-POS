@@ -235,6 +235,30 @@ def manual_order_create_view(request):
         active_branch = Branch.objects.filter(pk=active_branch_id).first() if active_branch_id else None
 
     if request.method == "POST":
+        supplier_strategy = (request.POST.get("supplier_strategy") or "cascade").strip()
+        selected_supplier_ids_raw = request.POST.getlist("supplier_id[]")
+        unregistered_supplier_name = (request.POST.get("unregistered_supplier_name") or "").strip()
+        preferred_supplier_ids = []
+
+        if supplier_strategy not in {"cascade", "selected", "unregistered"}:
+            return HttpResponseBadRequest("Invalid supplier strategy selected.")
+
+        if supplier_strategy == "selected":
+            if not selected_supplier_ids_raw:
+                return HttpResponseBadRequest("Select at least one supplier.")
+            try:
+                preferred_supplier_ids = sorted({int(value) for value in selected_supplier_ids_raw if str(value).strip()})
+            except (TypeError, ValueError):
+                return HttpResponseBadRequest("Invalid supplier selection.")
+            valid_count = Supplier.objects.filter(id__in=preferred_supplier_ids).count()
+            if valid_count != len(preferred_supplier_ids):
+                return HttpResponseBadRequest("One or more selected suppliers are invalid.")
+
+        if supplier_strategy == "unregistered":
+            if not unregistered_supplier_name:
+                return HttpResponseBadRequest("Enter an unregistered supplier name.")
+            preferred_supplier_ids = []
+
         product_ids = request.POST.getlist("product_id[]")
         branch_ids = request.POST.getlist("branch_id[]")
         packet_values = request.POST.getlist("packets[]")
@@ -333,67 +357,12 @@ def manual_order_create_view(request):
                     )
                 )
 
-        now = timezone.now()
         reorder_ids = set()
-        total_packets = 0
 
         with transaction.atomic():
             for (product_id, branch_id), packets in grouped_lines.items():
                 product = product_map[product_id]
                 branch = branch_map[branch_id]
-                total_packets += packets
-
-                existing_manual_reorder = (
-                    AutoReorderRequest.objects.select_for_update()
-                    .filter(
-                        product=product,
-                        status=AutoReorderRequest.STATUS_OPEN,
-                        origin=AutoReorderRequest.ORIGIN_MANUAL,
-                    )
-                    .order_by("-created_at")
-                    .first()
-                )
-
-                if existing_manual_reorder:
-                    branch_requirements = existing_manual_reorder.branch_requirements or {}
-                    if not isinstance(branch_requirements, dict):
-                        branch_requirements = {}
-
-                    branch_requirements[branch.name] = (
-                        _to_non_negative_int(branch_requirements.get(branch.name, 0)) + packets
-                    )
-
-                    existing_manual_reorder.target_stock_level = max(int(product.max_stock or 1), 1)
-                    existing_manual_reorder.current_stock_snapshot = product.current_stock()
-                    existing_manual_reorder.requested_quantity += packets
-                    existing_manual_reorder.remaining_quantity += packets
-                    existing_manual_reorder.branch_requirements = branch_requirements
-                    existing_manual_reorder.save(
-                        update_fields=[
-                            "target_stock_level",
-                            "current_stock_snapshot",
-                            "requested_quantity",
-                            "remaining_quantity",
-                            "branch_requirements",
-                            "updated_at",
-                        ]
-                    )
-
-                    live_pending_request = (
-                        existing_manual_reorder.supplier_requests.select_for_update()
-                        .filter(
-                            status=SupplierReorderRequest.STATUS_PENDING,
-                            expires_at__gt=now,
-                        )
-                        .order_by("-created_at")
-                        .first()
-                    )
-                    if live_pending_request:
-                        live_pending_request.requested_quantity += packets
-                        live_pending_request.save(update_fields=["requested_quantity", "updated_at"])
-
-                    reorder_ids.add(existing_manual_reorder.id)
-                    continue
 
                 reorder = AutoReorderRequest.objects.create(
                     product=product,
@@ -402,6 +371,8 @@ def manual_order_create_view(request):
                     requested_quantity=packets,
                     remaining_quantity=packets,
                     origin=AutoReorderRequest.ORIGIN_MANUAL,
+                    preferred_supplier_ids=preferred_supplier_ids,
+                    unregistered_supplier_name=unregistered_supplier_name if supplier_strategy == "unregistered" else "",
                     branch_requirements={branch.name: packets},
                     status=AutoReorderRequest.STATUS_OPEN,
                 )
@@ -461,6 +432,7 @@ def manual_order_create_view(request):
         normalized_active_branch_id = None
     return render(request, "products/partials/_create_order_form.html", {
         "products": products,
+        "suppliers": Supplier.objects.order_by("priority", "name"),
         "all_branches": all_branches,
         "active_branch": active_branch,
         "active_branch_id": normalized_active_branch_id,
