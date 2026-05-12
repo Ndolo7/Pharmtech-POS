@@ -13,6 +13,30 @@
         hx-on::after-request="if(event.detail.successful) { document.getElementById('modal-container').innerHTML=''; }"
       >
         {% csrf_token %}
+        <div class="card" style="padding:12px;margin-bottom:12px;">
+          <div class="form-group" style="margin-bottom:8px;">
+            <label>Supplier Routing *</label>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+              <label><input type="radio" name="supplier_strategy" value="cascade" checked> Normal Cascade</label>
+              <label><input type="radio" name="supplier_strategy" value="selected"> Selected Supplier(s) Only</label>
+              <label><input type="radio" name="supplier_strategy" value="unregistered"> Unregistered Supplier</label>
+            </div>
+          </div>
+          <div class="form-group" id="manual-order-selected-suppliers" style="margin-bottom:8px;display:none;">
+            <label>Suppliers *</label>
+            <select name="supplier_id[]" class="form-input search-select" multiple>
+              {% for s in suppliers %}
+              <option value="{{ s.id }}">{{ s.name }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Only these suppliers will receive this manual order.</small>
+          </div>
+          <div class="form-group" id="manual-order-unregistered-supplier" style="margin-bottom:0;display:none;">
+            <label>Unregistered Supplier Name *</label>
+            <input type="text" name="unregistered_supplier_name" class="form-input" placeholder="Enter supplier name">
+            <small class="text-muted">No supplier cascade will run for this order.</small>
+          </div>
+        </div>
         {% if not can_select_branch and active_branch %}
         <div class="message message-info" style="margin-bottom:12px;max-width:none">
           Ordering for branch: <strong>{{ active_branch.name }}</strong>
@@ -237,6 +261,15 @@
     submitButton.disabled = !allValid;
   }
 
+  function updateSupplierStrategyUI() {
+    const strategy = form.querySelector('input[name="supplier_strategy"]:checked')?.value || "cascade";
+    const selectedWrap = document.getElementById("manual-order-selected-suppliers");
+    const unregisteredWrap = document.getElementById("manual-order-unregistered-supplier");
+    if (!selectedWrap || !unregisteredWrap) return;
+    selectedWrap.style.display = strategy === "selected" ? "" : "none";
+    unregisteredWrap.style.display = strategy === "unregistered" ? "" : "none";
+  }
+
   function cloneRow() {
     if (!manualOrderRowTemplate) return;
     const clone = manualOrderRowTemplate.cloneNode(true);
@@ -286,10 +319,16 @@
   });
 
   form.addEventListener("input", validateRows);
-  form.addEventListener("change", validateRows);
+  form.addEventListener("change", (event) => {
+    validateRows();
+    if (event.target && event.target.name === "supplier_strategy") {
+      updateSupplierStrategyUI();
+    }
+  });
 
   if (typeof initTomSelect === "function") initTomSelect(rowsContainer);
   updateRemoveButtons();
   validateRows();
+  updateSupplierStrategyUI();
 })();
 </script>
