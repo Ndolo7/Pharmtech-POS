@@ -5,7 +5,7 @@
       <button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
     </div>
     <div class="modal-body">
-      <form method="post"
+      <form id="product-form-modal" method="post"
         {% if product %}
           hx-post="{% url 'product-edit' product.pk %}"
         {% else %}
@@ -54,14 +54,62 @@
           <label>Description</label>
           {{ form.description }}
         </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+          {{ form.exempt_from_auto_reorder }}
+          <label style="margin:0;">Exempt from auto reorder</label>
+        </div>
         {% if form.errors %}
           <div class="message message-error">{{ form.errors }}</div>
         {% endif %}
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
-          <button type="submit" class="btn btn-primary">{% if product %}Save Changes{% else %}Create Product{% endif %}</button>
+          <button
+            type="submit"
+            id="product-form-submit"
+            class="btn btn-primary"
+          >
+            {% if product %}Save Changes{% else %}Create Product{% endif %}
+          </button>
         </div>
       </form>
     </div>
   </div>
 </div>
+
+<script>
+(function () {
+  const form = document.getElementById("product-form-modal");
+  const submitBtn = document.getElementById("product-form-submit");
+  if (!form || !submitBtn) return;
+
+  const postUrl = form.getAttribute("hx-post") || "";
+  const isEditMode = postUrl.indexOf("/edit/") !== -1;
+  const initialState = JSON.stringify(Array.from(new FormData(form).entries()));
+
+  function hasChanges() {
+    const currentState = JSON.stringify(Array.from(new FormData(form).entries()));
+    return currentState !== initialState;
+  }
+
+  function syncButton() {
+    submitBtn.disabled = isEditMode ? !hasChanges() : false;
+  }
+
+  form.addEventListener("input", syncButton);
+  form.addEventListener("change", syncButton);
+  form.addEventListener("htmx:beforeRequest", function () {
+    submitBtn.disabled = true;
+  });
+  form.addEventListener("htmx:responseError", function () {
+    submitBtn.disabled = false;
+  });
+  form.addEventListener("htmx:sendError", function () {
+    submitBtn.disabled = false;
+  });
+  form.addEventListener("htmx:afterRequest", function () {
+    syncButton();
+  });
+
+  syncButton();
+})();
+</script>
