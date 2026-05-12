@@ -434,7 +434,11 @@ def scan_low_stock_and_trigger_reorders():
             updated_at=now,
         )
 
-    for product in Product.objects.filter(is_active=True, id__in=sold_product_ids).order_by("id"):
+    for product in Product.objects.filter(
+        is_active=True,
+        exempt_from_auto_reorder=False,
+        id__in=sold_product_ids,
+    ).order_by("id"):
         pack_quantity = max(int(product.pack_quantity or 1), 1)
         reorder_level = product.reorder_level
         max_stock = max(int(product.max_stock or 1), 1)
@@ -578,8 +582,18 @@ def notify_next_supplier(reorder_request_id: int):
             pending.responded_at = now
             pending.save(update_fields=["status", "responded_at", "updated_at"])
 
+        if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.unregistered_supplier_name:
+            return {
+                "status": "manual_unregistered_supplier",
+                "supplier_name": reorder.unregistered_supplier_name,
+            }
+
         attempted_supplier_ids = reorder.supplier_requests.values_list("supplier_id", flat=True)
-        next_supplier = Supplier.objects.exclude(id__in=attempted_supplier_ids).order_by("priority", "id").first()
+        supplier_candidates = Supplier.objects.all()
+        if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.preferred_supplier_ids:
+            supplier_candidates = supplier_candidates.filter(id__in=reorder.preferred_supplier_ids)
+
+        next_supplier = supplier_candidates.exclude(id__in=attempted_supplier_ids).order_by("priority", "id").first()
         supplier_priority = next_supplier.priority if next_supplier else None
 
         if not next_supplier:
