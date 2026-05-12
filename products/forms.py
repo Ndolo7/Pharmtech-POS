@@ -18,6 +18,7 @@ class ProductForm(forms.ModelForm):
             "reorder_level",
             "max_stock",
             "pack_quantity",
+            "exempt_from_auto_reorder",
         )
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-input", "placeholder": "Product name"}),
@@ -28,6 +29,7 @@ class ProductForm(forms.ModelForm):
             "reorder_level": forms.NumberInput(attrs={"class": "form-input", "placeholder": "10"}),
             "max_stock": forms.NumberInput(attrs={"class": "form-input", "placeholder": "100", "min": "1"}),
             "pack_quantity": forms.NumberInput(attrs={"class": "form-input", "placeholder": "1", "min": "1"}),
+            "exempt_from_auto_reorder": forms.CheckboxInput(attrs={"class": "form-checkbox"}),
         }
 
 
