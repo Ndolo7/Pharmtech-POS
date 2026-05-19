@@ -252,6 +252,26 @@ def _supplier_reorder_batch_message_text(
     return intro + "\n\n".join(lines) + "\n\n"
 
 
+def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
+    normalized_name = (unregistered_name or "").strip()
+    if not normalized_name:
+        raise ValueError("Unregistered supplier name is required.")
+
+    existing = Supplier.objects.filter(name__iexact=normalized_name).order_by("id").first()
+    if existing:
+        return existing
+
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "supplier"
+    return Supplier.objects.create(
+        name=normalized_name,
+        contact_person=normalized_name[:100],
+        phone_number="0000000000",
+        email=f"unregistered+{slug}@example.com",
+        address="Unregistered supplier",
+        priority=9999,
+    )
+
+
 def _send_supplier_reorder_sms_once(supplier_request: SupplierReorderRequest, message: str | None = None) -> dict:
     sms_body = message or _supplier_reorder_message_text(
         supplier_request,
@@ -601,9 +621,34 @@ def notify_next_supplier(reorder_request_id: int):
             pending.save(update_fields=["status", "responded_at", "updated_at"])
 
         if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.unregistered_supplier_name:
+            unregistered_supplier = _get_or_create_unregistered_supplier(reorder.unregistered_supplier_name)
+            supplier_request = (
+                reorder.supplier_requests.select_for_update()
+                .filter(supplier=unregistered_supplier)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if not supplier_request:
+                supplier_request = SupplierReorderRequest.objects.create(
+                    reorder_request=reorder,
+                    supplier=unregistered_supplier,
+                    priority=unregistered_supplier.priority or 9999,
+                    requested_quantity=reorder.remaining_quantity,
+                    fulfilled_quantity=reorder.remaining_quantity,
+                    status=SupplierReorderRequest.STATUS_ACCEPTED,
+                    expires_at=now + timedelta(seconds=_auto_order_link_expiry_seconds()),
+                    responded_at=now,
+                    emailed_at=now,
+                )
+                reorder.remaining_quantity = 0
+                reorder.status = AutoReorderRequest.STATUS_FULFILLED
+                reorder.completed_at = now
+                reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
             return {
-                "status": "manual_unregistered_supplier",
-                "supplier_name": reorder.unregistered_supplier_name,
+                "status": "manual_unregistered_supplier_ready_for_receiving",
+                "supplier_name": unregistered_supplier.name,
+                "supplier_id": unregistered_supplier.id,
+                "supplier_request_id": supplier_request.id,
             }
 
         attempted_supplier_ids = reorder.supplier_requests.values_list("supplier_id", flat=True)
