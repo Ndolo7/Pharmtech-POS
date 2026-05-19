@@ -959,7 +959,7 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
         self.assertEqual(self.reorder_one.remaining_quantity, 0)
 
         req = SupplierReorderRequest.objects.select_related("supplier").get(reorder_request=self.reorder_one)
-        self.assertEqual(req.supplier.name, "Walk-in Supplier")
+        self.assertEqual(req.supplier.name, "Unregistered Supplier")
         self.assertEqual(req.status, SupplierReorderRequest.STATUS_ACCEPTED)
         self.assertEqual(req.pending_quantity, req.requested_quantity)
 
@@ -1174,6 +1174,48 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "can only accept", status_code=400)
         notify_delay.assert_not_called()
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_unregistered_supplier_is_created_immediately(self, notify_delay):
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "supplier_strategy": "unregistered",
+                "unregistered_supplier_name": "Street Vendor Ltd",
+                "product_id[]": [str(self.product_one.id)],
+                "branch_id[]": [str(self.branch_a.id)],
+                "packets[]": ["2"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Supplier.objects.filter(name__iexact="Unregistered Supplier").exists())
+        notify_delay.assert_not_called()
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_unregistered_supplier_items_show_in_pending_orders(self, notify_delay):
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "supplier_strategy": "unregistered",
+                "unregistered_supplier_name": "Any Vendor Name",
+                "product_id[]": [str(self.product_one.id)],
+                "branch_id[]": [str(self.branch_a.id)],
+                "packets[]": ["2"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        notify_delay.assert_not_called()
+
+        supplier = Supplier.objects.get(name__iexact="Unregistered Supplier")
+        pending_response = self.client.get(
+            reverse("supplier-pending-orders"),
+            data={"supplier_id": str(supplier.id), "branch_id": str(self.branch_a.id)},
+        )
+        self.assertEqual(pending_response.status_code, 200)
+        self.assertContains(pending_response, self.product_one.name)
 
 
 class ReceiveStockPricingValidationTests(TestCase):
