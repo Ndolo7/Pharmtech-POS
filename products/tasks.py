@@ -234,6 +234,24 @@ def _supplier_reorder_message_text(supplier_request: SupplierReorderRequest, res
     )
 
 
+def _supplier_reorder_batch_message_text(
+    supplier_requests: list[SupplierReorderRequest],
+    *,
+    contact_name: str,
+) -> str:
+    intro = (
+        f"Dear {contact_name},\n\n"
+        "Please review and respond to the following manual order request(s) within 1 hour:\n\n"
+    )
+    lines = []
+    for index, supplier_request in enumerate(supplier_requests, start=1):
+        response_link = _supplier_reorder_response_link(supplier_request)
+        product_name = supplier_request.reorder_request.product.name
+        requested_quantity = supplier_request.requested_quantity
+        lines.append(f"{index}. {product_name} - {requested_quantity} packet(s)\n{response_link}")
+    return intro + "\n\n".join(lines) + "\n\n"
+
+
 def _send_supplier_reorder_sms_once(supplier_request: SupplierReorderRequest, message: str | None = None) -> dict:
     sms_body = message or _supplier_reorder_message_text(
         supplier_request,
@@ -614,13 +632,11 @@ def notify_next_supplier(reorder_request_id: int):
             expires_at=expires_at,
         )
 
-    response_link = _supplier_reorder_response_link(supplier_request)
-    message = _supplier_reorder_message_text(supplier_request, response_link)
     reference_now = timezone.now()
     is_manual_reorder = supplier_request.reorder_request.origin == AutoReorderRequest.ORIGIN_MANUAL
     is_primary_live_request = _is_primary_live_supplier_request(supplier_request, now=reference_now)
 
-    if not is_manual_reorder and not is_primary_live_request:
+    if not is_primary_live_request:
         expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
         return {
             "status": "notification_suppressed_existing_pending_supplier",
@@ -639,9 +655,37 @@ def notify_next_supplier(reorder_request_id: int):
             "sms_status": "skipped_existing_pending_supplier_notification",
         }
 
+    message = ""
+    supplier_requests_to_mark: list[SupplierReorderRequest] = [supplier_request]
+    if is_manual_reorder:
+        supplier_requests_to_mark = list(
+            SupplierReorderRequest.objects.select_related("reorder_request__product", "supplier")
+            .filter(
+                supplier_id=supplier_request.supplier_id,
+                status=SupplierReorderRequest.STATUS_PENDING,
+                emailed_at__isnull=True,
+                reorder_request__origin=AutoReorderRequest.ORIGIN_MANUAL,
+            )
+            .order_by("created_at", "id")
+        )
+        if not any(req.id == supplier_request.id for req in supplier_requests_to_mark):
+            expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
+            return {
+                "status": "notification_suppressed_existing_pending_supplier",
+                "supplier_request_id": supplier_request.id,
+                "sms_status": "skipped_existing_pending_supplier_notification",
+            }
+        message = _supplier_reorder_batch_message_text(
+            supplier_requests_to_mark,
+            contact_name=supplier_request.supplier.contact_person or supplier_request.supplier.name,
+        )
+    else:
+        response_link = _supplier_reorder_response_link(supplier_request)
+        message = _supplier_reorder_message_text(supplier_request, response_link)
+
     try:
         send_mail(
-            subject=f"Purchase Order",
+            subject="Purchase Order",
             message=message,
             from_email=_mail_sender(),
             recipient_list=[supplier_request.supplier.email],
@@ -673,8 +717,10 @@ def notify_next_supplier(reorder_request_id: int):
         send_supplier_reorder_sms.delay(supplier_request.id)
         sms_status = "queued_retry"
 
-    SupplierReorderRequest.objects.filter(pk=supplier_request.id).update(emailed_at=timezone.now())
-    expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
+    mark_ids = [req.id for req in supplier_requests_to_mark]
+    SupplierReorderRequest.objects.filter(pk__in=mark_ids).update(emailed_at=timezone.now())
+    for marked_request in supplier_requests_to_mark:
+        expire_supplier_request.apply_async(args=[marked_request.id], eta=marked_request.expires_at)
     return {"status": "email_sent", "supplier_request_id": supplier_request.id, "sms_status": sms_status}
 
 
