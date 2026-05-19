@@ -938,6 +938,31 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
             2,
         )
 
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_notify_next_supplier_manual_unregistered_creates_expected_receivable_line(self, send_mail_mock, send_sms_mock):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        self.reorder_one.origin = AutoReorderRequest.ORIGIN_MANUAL
+        self.reorder_one.unregistered_supplier_name = "Walk-in Supplier"
+        self.reorder_one.save(update_fields=["origin", "unregistered_supplier_name"])
+
+        result = notify_next_supplier(self.reorder_one.id)
+
+        self.assertEqual(result.get("status"), "manual_unregistered_supplier_ready_for_receiving")
+        self.assertEqual(send_mail_mock.call_count, 0)
+        self.assertEqual(send_sms_mock.call_count, 0)
+
+        self.reorder_one.refresh_from_db()
+        self.assertEqual(self.reorder_one.status, AutoReorderRequest.STATUS_FULFILLED)
+        self.assertEqual(self.reorder_one.remaining_quantity, 0)
+
+        req = SupplierReorderRequest.objects.select_related("supplier").get(reorder_request=self.reorder_one)
+        self.assertEqual(req.supplier.name, "Walk-in Supplier")
+        self.assertEqual(req.status, SupplierReorderRequest.STATUS_ACCEPTED)
+        self.assertEqual(req.pending_quantity, req.requested_quantity)
+
     @patch("products.tasks.send_supplier_reorder_sms.retry")
     @patch("products.tasks.send_sms_via_leopard")
     def test_send_supplier_reorder_sms_returns_failed_when_retries_exhausted(self, send_sms_mock, retry_mock):
