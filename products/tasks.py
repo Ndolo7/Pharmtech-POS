@@ -253,20 +253,16 @@ def _supplier_reorder_batch_message_text(
 
 
 def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
-    normalized_name = (unregistered_name or "").strip()
-    if not normalized_name:
-        raise ValueError("Unregistered supplier name is required.")
-
-    existing = Supplier.objects.filter(name__iexact=normalized_name).order_by("id").first()
+    canonical_name = "Unregistered Supplier"
+    existing = Supplier.objects.filter(name__iexact=canonical_name).order_by("id").first()
     if existing:
         return existing
 
-    slug = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "supplier"
     return Supplier.objects.create(
-        name=normalized_name,
-        contact_person=normalized_name[:100],
+        name=canonical_name,
+        contact_person=canonical_name,
         phone_number="0000000000",
-        email=f"unregistered+{slug}@example.com",
+        email="unregistered-supplier@example.com",
         address="Unregistered supplier",
         priority=9999,
     )

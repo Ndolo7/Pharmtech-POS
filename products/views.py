@@ -1,8 +1,10 @@
 import csv
 import json
 import logging
+import re
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
+from datetime import timedelta
 from io import BytesIO
 from math import ceil
 from django.apps import apps
@@ -162,6 +164,22 @@ def _max_packets_allowed_for_product(product):
     return max(int(ceil(max_stock_units / float(pack_quantity))), 1)
 
 
+def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
+    canonical_name = "Unregistered Supplier"
+    existing = Supplier.objects.filter(name__iexact=canonical_name).order_by("id").first()
+    if existing:
+        return existing
+
+    return Supplier.objects.create(
+        name=canonical_name,
+        contact_person=canonical_name,
+        phone_number="0000000000",
+        email="unregistered-supplier@example.com",
+        address="Unregistered supplier",
+        priority=9999,
+    )
+
+
 def _pending_packets_by_product_branch(product_ids):
     totals = defaultdict(int)
     if not product_ids:
@@ -257,6 +275,7 @@ def manual_order_create_view(request):
         if supplier_strategy == "unregistered":
             if not unregistered_supplier_name:
                 return HttpResponseBadRequest("Enter an unregistered supplier name.")
+            _get_or_create_unregistered_supplier(unregistered_supplier_name)
             preferred_supplier_ids = []
 
         product_ids = request.POST.getlist("product_id[]")
@@ -358,6 +377,7 @@ def manual_order_create_view(request):
                 )
 
         reorder_ids = set()
+        unregistered_supplier = _get_or_create_unregistered_supplier(unregistered_supplier_name) if supplier_strategy == "unregistered" else None
 
         with transaction.atomic():
             for (product_id, branch_id), packets in grouped_lines.items():
@@ -376,7 +396,25 @@ def manual_order_create_view(request):
                     branch_requirements={branch.name: packets},
                     status=AutoReorderRequest.STATUS_OPEN,
                 )
-                reorder_ids.add(reorder.id)
+                if supplier_strategy == "unregistered" and unregistered_supplier:
+                    now = timezone.now()
+                    SupplierReorderRequest.objects.create(
+                        reorder_request=reorder,
+                        supplier=unregistered_supplier,
+                        priority=unregistered_supplier.priority or 9999,
+                        requested_quantity=packets,
+                        fulfilled_quantity=packets,
+                        status=SupplierReorderRequest.STATUS_ACCEPTED,
+                        expires_at=now + timedelta(seconds=3600),
+                        responded_at=now,
+                        emailed_at=now,
+                    )
+                    reorder.remaining_quantity = 0
+                    reorder.status = AutoReorderRequest.STATUS_FULFILLED
+                    reorder.completed_at = now
+                    reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
+                else:
+                    reorder_ids.add(reorder.id)
 
         for reorder_id in sorted(reorder_ids):
             notify_next_supplier.delay(reorder_id)
