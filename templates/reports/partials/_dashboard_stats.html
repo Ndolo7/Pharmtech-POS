@@ -18,7 +18,11 @@
     <div class="text-muted text-sm mt-1">{{ month_count }} transaction{{ month_count|pluralize }}</div>
   </div>
   <div class="stat-card dashboard-stat-card yellow">
-    <div class="label">Month Supplier Costs</div>
-    <div class="value">KES {{ month_supplier_costs|floatformat:0 }}</div>
+    <div class="label">Month Expenses</div>
+    <div class="value">KES {{ month_expenses|floatformat:0 }}</div>
+  </div>
+  <div class="stat-card dashboard-stat-card {% if month_gross_profit < 0 %}red{% else %}green{% endif %}">
+    <div class="label">Month Gross Profit</div>
+    <div class="value">KES {{ month_gross_profit|floatformat:0 }}</div>
   </div>
 </div>
