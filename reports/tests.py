@@ -318,6 +318,20 @@ class ReportsBranchScopeTests(TestCase):
         self.assertContains(response, "KES 150")
         self.assertContains(response, "KES 850")
 
+    def test_dashboard_stats_gross_profit_is_hidden_for_cashier(self):
+        cashier = User.objects.create_user(
+            username="cashier_dash",
+            password="pass12345",
+            role="cashier",
+            branch=self.wendani,
+        )
+        self.client.force_login(cashier)
+        response = self.client.get(reverse("dashboard"))
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Month Expenses")
+        self.assertNotContains(response, "Month Gross Profit")
+
     def test_sales_report_transaction_history_is_super_admin_only(self):
         sale = Sale.objects.create(
             receipt_number="RCP-ORD-001",
