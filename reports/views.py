@@ -184,6 +184,13 @@ def sales_report_view(request):
     branch_ctx = _report_branch_context(request)
     active_branch = branch_ctx["active_branch"]
 
+    tab = (request.GET.get("tab") or "daily").strip().lower()
+    can_view_transactions = request.user.is_superuser or getattr(request.user, "role", "") == "super_admin"
+    if tab not in {"daily", "transactions"}:
+        tab = "daily"
+    if tab == "transactions" and not can_view_transactions:
+        tab = "daily"
+
     try:
         sd = datetime.strptime(start_date, "%Y-%m-%d").date()
         ed = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -241,6 +248,68 @@ def sales_report_view(request):
             cur += timedelta(days=1)
 
         data = {"summary": summary, "daily": daily}
+
+        if can_view_transactions:
+            sales_qs = (
+                Sale.objects.filter(created_at__date__gte=sd, created_at__date__lte=ed)
+                .select_related("branch", "cashier")
+                .annotate(items_count=Count("items"))
+            )
+            if active_branch:
+                sales_qs = sales_qs.filter(branch=active_branch)
+
+            all_rows = []
+            for sale in sales_qs.order_by("-created_at"):
+                all_rows.append(
+                    {
+                        "receipt_number": sale.receipt_number,
+                        "created_at": timezone.localtime(sale.created_at),
+                        "date": timezone.localtime(sale.created_at).date(),
+                        "branch_name": sale.branch.name,
+                        "cashier_name": sale.cashier.get_full_name() or sale.cashier.username,
+                        "payment_method": sale.get_payment_method_display(),
+                        "items_count": sale.items_count,
+                        "total_amount": sale.total_amount,
+                        "cash_amount": sale.cash_amount,
+                        "mpesa_amount": sale.mpesa_amount,
+                        "credit_amount": sale.credit_amount,
+                    }
+                )
+
+            # Group flat rows by date (rows already ordered newest-first)
+            groups = []
+            seen_dates = []
+            rows_by_date = {}
+            for row in all_rows:
+                d = row["date"]
+                if d not in rows_by_date:
+                    rows_by_date[d] = []
+                    seen_dates.append(d)
+                rows_by_date[d].append(row)
+
+            for d in seen_dates:
+                day_rows = rows_by_date[d]
+                groups.append(
+                    {
+                        "date_display": d.strftime("%d %b %Y"),
+                        "count": len(day_rows),
+                        "total_items": sum(r["items_count"] for r in day_rows),
+                        "total_cash": sum((r["cash_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_mpesa": sum((r["mpesa_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_credit": sum((r["credit_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_amount": sum((r["total_amount"] for r in day_rows), Decimal("0.00")),
+                        "rows": day_rows,
+                    }
+                )
+
+            data["transactions"] = {
+                "summary": {
+                    "total_transactions": len(all_rows),
+                    "total_amount": sum((r["total_amount"] for r in all_rows), Decimal("0.00")),
+                },
+                "groups": groups,
+            }
+
     except ValueError:
         errors = "Invalid date format."
 
@@ -249,6 +318,8 @@ def sales_report_view(request):
         "errors": errors,
         "start_date": start_date,
         "end_date": end_date,
+        "tab": tab,
+        "can_view_transactions": can_view_transactions,
         **branch_ctx,
     }
     if request.htmx:
