@@ -21,8 +21,10 @@
     <div class="label">Month Expenses</div>
     <div class="value">KES {{ month_expenses|floatformat:0 }}</div>
   </div>
+  {% if can_view_gross_profit %}
   <div class="stat-card dashboard-stat-card {% if month_gross_profit < 0 %}red{% else %}green{% endif %}">
     <div class="label">Month Gross Profit</div>
     <div class="value">KES {{ month_gross_profit|floatformat:0 }}</div>
   </div>
+  {% endif %}
 </div>

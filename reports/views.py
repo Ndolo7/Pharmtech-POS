@@ -156,6 +156,8 @@ def _build_dashboard_ctx(request):
     except Shift.DoesNotExist:
         pass
 
+    can_view_gross_profit = request.user.is_superuser or getattr(request.user, "role", "") == "super_admin"
+
     return {
         "today_total": today_sales["total_amount"] or 0,
         "today_cash": today_sales["total_cash"] or 0,
@@ -166,6 +168,7 @@ def _build_dashboard_ctx(request):
         "month_supplier_costs": month_supplier_costs["total_amount"] or 0,
         "month_expenses": month_total_expenses,
         "month_gross_profit": month_total_sales - month_total_expenses,
+        "can_view_gross_profit": can_view_gross_profit,
         "active_shift": active_shift,
         **branch_ctx,
     }
