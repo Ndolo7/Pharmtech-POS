@@ -8,7 +8,7 @@ from django.utils import timezone
 from accounts.models import User
 from branches.models import Branch
 from products.models import AutoReorderRequest, Product, Purchase, PurchaseItem, Supplier, SupplierReorderRequest
-from sales.models import Sale, SaleItem
+from sales.models import Sale, SaleItem, Shift, ShiftExpense
 
 
 class ReportsBranchScopeTests(TestCase):
@@ -283,6 +283,78 @@ class ReportsBranchScopeTests(TestCase):
         self.assertContains(response, "INV-ITEMS-01")
         self.assertContains(response, "Amoxicillin")
         self.assertContains(response, "KES 500.00")
+
+    def test_dashboard_stats_include_month_expenses_and_gross_profit(self):
+        shift = Shift.objects.create(
+            cashier=self.super_admin,
+            branch=self.wendani,
+            opening_cash=Decimal("0.00"),
+        )
+        ShiftExpense.objects.create(
+            shift=shift,
+            amount=Decimal("150.00"),
+            description="Fuel",
+        )
+        sale = Sale.objects.create(
+            receipt_number="RCP-DASH-001",
+            branch=self.wendani,
+            cashier=self.super_admin,
+            payment_method="cash",
+            cash_amount=Decimal("1000.00"),
+            mpesa_amount=Decimal("0.00"),
+            total_amount=Decimal("1000.00"),
+            shift=shift,
+        )
+        now = timezone.now()
+        Shift.objects.filter(pk=shift.pk).update(start_time=now)
+        Sale.objects.filter(pk=sale.pk).update(created_at=now)
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Month Expenses")
+        self.assertContains(response, "Month Gross Profit")
+        self.assertContains(response, "KES 150")
+        self.assertContains(response, "KES 850")
+
+    def test_sales_report_transaction_history_is_super_admin_only(self):
+        sale = Sale.objects.create(
+            receipt_number="RCP-ORD-001",
+            branch=self.wendani,
+            cashier=self.super_admin,
+            payment_method="cash",
+            cash_amount=Decimal("450.00"),
+            mpesa_amount=Decimal("0.00"),
+            total_amount=Decimal("450.00"),
+        )
+        Sale.objects.filter(pk=sale.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        admin_response = self.client.get(
+            reverse("sales-report"),
+            {"start_date": "2026-04-15", "end_date": "2026-04-15", "tab": "transactions"},
+        )
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertContains(admin_response, "Transaction History")
+        self.assertContains(admin_response, "RCP-ORD-001")
+
+        cashier = User.objects.create_user(
+            username="cashier_orders",
+            password="pass12345",
+            role="cashier",
+            branch=self.wendani,
+        )
+        self.client.force_login(cashier)
+        cashier_response = self.client.get(
+            reverse("sales-report"),
+            {"start_date": "2026-04-15", "end_date": "2026-04-15", "tab": "transactions"},
+        )
+        self.assertEqual(cashier_response.status_code, 200)
+        self.assertNotContains(cashier_response, "Transaction History")
+        self.assertNotContains(cashier_response, "RCP-ORD-001")
 
 
 class DailySalesBreakdownModalTests(TestCase):
