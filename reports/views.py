@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from django.views.decorators.http import require_GET
 from branches.models import Branch
-from sales.models import Sale, Shift
+from sales.models import Sale, Shift, ShiftExpense
 from products.models import AutoReorderRequest, Purchase, Supplier, SupplierReorderRequest
 
 
@@ -137,6 +137,11 @@ def _build_dashboard_ctx(request):
     if branch:
         month_purchase_qs = month_purchase_qs.filter(branch=branch)
     month_supplier_costs = month_purchase_qs.aggregate(total_amount=Sum("total_amount"))
+    month_expenses_qs = ShiftExpense.objects.filter(shift__start_time__date__gte=month_start)
+    if branch:
+        month_expenses_qs = month_expenses_qs.filter(shift__branch=branch)
+    month_total_expenses = month_expenses_qs.aggregate(total_amount=Sum("amount"))["total_amount"] or Decimal("0.00")
+    month_total_sales = month_sales["total_amount"] or Decimal("0.00")
 
     active_shift = None
     shift_branch = request.user.branch if request.user.branch_id else branch
@@ -159,6 +164,8 @@ def _build_dashboard_ctx(request):
         "month_total": month_sales["total_amount"] or 0,
         "month_count": month_sales["count"] or 0,
         "month_supplier_costs": month_supplier_costs["total_amount"] or 0,
+        "month_expenses": month_total_expenses,
+        "month_gross_profit": month_total_sales - month_total_expenses,
         "active_shift": active_shift,
         **branch_ctx,
     }
@@ -176,6 +183,13 @@ def sales_report_view(request):
     start_date, end_date = _report_date_inputs(request)
     branch_ctx = _report_branch_context(request)
     active_branch = branch_ctx["active_branch"]
+
+    tab = (request.GET.get("tab") or "daily").strip().lower()
+    can_view_transactions = request.user.is_superuser or getattr(request.user, "role", "") == "super_admin"
+    if tab not in {"daily", "transactions"}:
+        tab = "daily"
+    if tab == "transactions" and not can_view_transactions:
+        tab = "daily"
 
     try:
         sd = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -195,9 +209,14 @@ def sales_report_view(request):
         if active_branch:
             purchases_qs = purchases_qs.filter(branch=active_branch)
         total_supplier_purchases = purchases_qs.aggregate(total_amount=Sum("total_amount"))["total_amount"] or Decimal("0.00")
+        expenses_qs = ShiftExpense.objects.filter(shift__start_time__date__gte=sd, shift__start_time__date__lte=ed)
+        if active_branch:
+            expenses_qs = expenses_qs.filter(shift__branch=active_branch)
+        total_expenses = expenses_qs.aggregate(total_amount=Sum("amount"))["total_amount"] or Decimal("0.00")
         total_sales_amount = summary["total_amount"] or Decimal("0.00")
         summary["total_supplier_purchases"] = total_supplier_purchases
-        summary["gross_profit"] = total_sales_amount - total_supplier_purchases
+        summary["total_expenses"] = total_expenses
+        summary["gross_profit"] = total_sales_amount - total_expenses
 
         daily = []
         cur = sd
@@ -212,6 +231,7 @@ def sales_report_view(request):
             day_supplier_purchases = purchases_qs.filter(created_at__date=cur).aggregate(
                 total_amount=Sum("total_amount")
             )["total_amount"] or Decimal("0.00")
+            day_expenses = expenses_qs.filter(shift__start_time__date=cur).aggregate(total_amount=Sum("amount"))["total_amount"] or Decimal("0.00")
             day_sales_amount = day["total_amount"] or Decimal("0.00")
             daily.append({
                 "date": cur.strftime("%d %b %Y"),
@@ -221,12 +241,75 @@ def sales_report_view(request):
                 "total_mpesa": day["total_mpesa"] or 0,
                 "total_credit": day["total_credit"] or 0,
                 "supplier_purchases": day_supplier_purchases,
-                "gross_profit": day_sales_amount - day_supplier_purchases,
+                "expenses": day_expenses,
+                "gross_profit": day_sales_amount - day_expenses,
                 "count": day["count"] or 0,
             })
             cur += timedelta(days=1)
 
         data = {"summary": summary, "daily": daily}
+
+        if can_view_transactions:
+            sales_qs = (
+                Sale.objects.filter(created_at__date__gte=sd, created_at__date__lte=ed)
+                .select_related("branch", "cashier")
+                .annotate(items_count=Count("items"))
+            )
+            if active_branch:
+                sales_qs = sales_qs.filter(branch=active_branch)
+
+            all_rows = []
+            for sale in sales_qs.order_by("-created_at"):
+                all_rows.append(
+                    {
+                        "receipt_number": sale.receipt_number,
+                        "created_at": timezone.localtime(sale.created_at),
+                        "date": timezone.localtime(sale.created_at).date(),
+                        "branch_name": sale.branch.name,
+                        "cashier_name": sale.cashier.get_full_name() or sale.cashier.username,
+                        "payment_method": sale.get_payment_method_display(),
+                        "items_count": sale.items_count,
+                        "total_amount": sale.total_amount,
+                        "cash_amount": sale.cash_amount,
+                        "mpesa_amount": sale.mpesa_amount,
+                        "credit_amount": sale.credit_amount,
+                    }
+                )
+
+            # Group flat rows by date (rows already ordered newest-first)
+            groups = []
+            seen_dates = []
+            rows_by_date = {}
+            for row in all_rows:
+                d = row["date"]
+                if d not in rows_by_date:
+                    rows_by_date[d] = []
+                    seen_dates.append(d)
+                rows_by_date[d].append(row)
+
+            for d in seen_dates:
+                day_rows = rows_by_date[d]
+                groups.append(
+                    {
+                        "date_display": d.strftime("%d %b %Y"),
+                        "count": len(day_rows),
+                        "total_items": sum(r["items_count"] for r in day_rows),
+                        "total_cash": sum((r["cash_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_mpesa": sum((r["mpesa_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_credit": sum((r["credit_amount"] for r in day_rows), Decimal("0.00")),
+                        "total_amount": sum((r["total_amount"] for r in day_rows), Decimal("0.00")),
+                        "rows": day_rows,
+                    }
+                )
+
+            data["transactions"] = {
+                "summary": {
+                    "total_transactions": len(all_rows),
+                    "total_amount": sum((r["total_amount"] for r in all_rows), Decimal("0.00")),
+                },
+                "groups": groups,
+            }
+
     except ValueError:
         errors = "Invalid date format."
 
@@ -235,6 +318,8 @@ def sales_report_view(request):
         "errors": errors,
         "start_date": start_date,
         "end_date": end_date,
+        "tab": tab,
+        "can_view_transactions": can_view_transactions,
         **branch_ctx,
     }
     if request.htmx:

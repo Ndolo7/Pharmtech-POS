@@ -1,7 +1,118 @@
 {% if errors %}
   <div class="message message-error">{{ errors }}</div>
 {% elif data %}
-  <!-- Summary -->
+  <!-- Tab bar -->
+  <div class="card mb-4" style="padding:12px 14px;">
+    <div class="flex gap-2 items-center">
+      <button
+        type="button"
+        class="btn {% if tab == 'daily' or not tab %}btn-primary{% else %}btn-secondary{% endif %}"
+        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&tab=daily"
+        hx-target="#report-results"
+        hx-swap="innerHTML"
+      >
+        Daily Breakdown
+      </button>
+      {% if can_view_transactions %}
+      <button
+        type="button"
+        class="btn {% if tab == 'transactions' %}btn-primary{% else %}btn-secondary{% endif %}"
+        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&tab=transactions"
+        hx-target="#report-results"
+        hx-swap="innerHTML"
+      >
+        Transaction History ({{ data.transactions.summary.total_transactions|default:0 }})
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if tab == "transactions" and can_view_transactions %}
+  <!-- Transaction History -->
+  <div class="stats-grid" style="margin-bottom:16px">
+    <div class="stat-card blue">
+      <div class="label">Total Transactions</div>
+      <div class="value">{{ data.transactions.summary.total_transactions|default:0 }}</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Total Sales</div>
+      <div class="value">KES {{ data.transactions.summary.total_amount|default:0|floatformat:0 }}</div>
+    </div>
+  </div>
+
+  {% if data.transactions.groups %}
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Receipt</th>
+            <th>Time</th>
+            <th>Branch</th>
+            <th>Cashier</th>
+            <th>Payment</th>
+            <th>Items</th>
+            <th>Cash</th>
+            <th>M-Pesa</th>
+            <th>Credit</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in data.transactions.groups %}
+          <!-- Date group header -->
+          <tr x-data="{ open: true }" id="txn-group-{{ forloop.counter }}"
+              style="background:var(--color-surface,#023f0c); cursor:pointer; color:#fff;"
+              @click="open = !open; $dispatch('txn-group-toggle-{{ forloop.counter }}', { open })">
+            <td style="padding:10px 12px; width:28px; color:#fff">
+              <span x-text="open ? '▾' : '▸'" style="font-size:12px; color:#fff"></span>
+            </td>
+            <td colspan="5" style="font-weight:600; padding:10px 0; color:#fff">
+              {{ group.date_display }}
+              <span style="margin-left:8px; font-weight:400; color:rgba(255,255,255,.8)">
+                {{ group.count }} sale{{ group.count|pluralize }}
+                · {{ group.total_items }} item{{ group.total_items|pluralize }}
+              </span>
+            </td>
+            <td style="color:#fff"></td>
+            <td style="font-weight:600; color:#fff">KES {{ group.total_cash|floatformat:2 }}</td>
+            <td style="font-weight:600; color:#fff">KES {{ group.total_mpesa|floatformat:2 }}</td>
+            <td style="font-weight:600; color:#fff">KES {{ group.total_credit|floatformat:2 }}</td>
+            <td style="font-weight:700; color:#fff">KES {{ group.total_amount|floatformat:2 }}</td>
+          </tr>
+          <!-- Individual sale rows for this date -->
+          {% for row in group.rows %}
+          <tr x-data="{ visible: true }"
+              @txn-group-toggle-{{ forloop.parentloop.counter }}.window="visible = $event.detail.open"
+              x-show="visible" x-transition
+              style="opacity:.9">
+            <td></td>
+            <td>{{ row.receipt_number }}</td>
+            <td>{{ row.created_at|date:"H:i" }}</td>
+            <td>{{ row.branch_name }}</td>
+            <td>{{ row.cashier_name }}</td>
+            <td>{{ row.payment_method }}</td>
+            <td>{{ row.items_count }}</td>
+            <td>KES {{ row.cash_amount|floatformat:2 }}</td>
+            <td>KES {{ row.mpesa_amount|floatformat:2 }}</td>
+            <td>KES {{ row.credit_amount|floatformat:2 }}</td>
+            <td class="font-bold">KES {{ row.total_amount|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card" style="padding:32px; text-align:center; color:var(--color-text-muted,#94a3b8)">
+    No transactions found for the selected criteria.
+  </div>
+  {% endif %}
+
+  {% else %}
+  <!-- Daily Breakdown -->
   <div class="stats-grid" style="margin-bottom:16px">
     <div class="stat-card blue">
       <div class="label">Total Sales</div>
@@ -21,8 +132,8 @@
       <div class="value">KES {{ data.summary.total_credit|default:0|floatformat:0 }}</div>
     </div>
     <div class="stat-card yellow">
-      <div class="label">Supplier Purchases</div>
-      <div class="value">KES {{ data.summary.total_supplier_purchases|default:0|floatformat:0 }}</div>
+      <div class="label">Expenses</div>
+      <div class="value">KES {{ data.summary.total_expenses|default:0|floatformat:0 }}</div>
     </div>
     <div class="stat-card {% if data.summary.gross_profit < 0 %}red{% else %}green{% endif %}">
       <div class="label">Gross Profit</div>
@@ -30,13 +141,12 @@
     </div>
   </div>
 
-  <!-- Daily breakdown -->
   <div class="card">
     <div class="card-header"><h2>Daily Breakdown</h2></div>
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Date</th><th>Transactions</th><th>Cash</th><th>M-Pesa</th><th>Credit</th><th>Sales</th><th>Supplier Purchases</th><th>Gross Profit</th>
+          <th>Date</th><th>Transactions</th><th>Cash</th><th>M-Pesa</th><th>Credit</th><th>Sales</th><th>Expenses</th><th>Gross Profit</th>
         </tr></thead>
         <tbody>
           {% for row in data.daily %}
@@ -53,7 +163,7 @@
             <td>KES {{ row.total_mpesa|floatformat:2 }}</td>
             <td>KES {{ row.total_credit|floatformat:2 }}</td>
             <td class="font-bold">KES {{ row.total_amount|floatformat:2 }}</td>
-            <td>KES {{ row.supplier_purchases|floatformat:2 }}</td>
+            <td>KES {{ row.expenses|floatformat:2 }}</td>
             <td class="font-bold {% if row.gross_profit < 0 %}text-danger{% elif row.gross_profit > 0 %}text-success{% endif %}">
               KES {{ row.gross_profit|floatformat:2 }}
             </td>
@@ -63,4 +173,5 @@
       </table>
     </div>
   </div>
+  {% endif %}
 {% endif %}
