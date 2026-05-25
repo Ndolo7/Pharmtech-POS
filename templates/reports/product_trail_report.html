@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Products Trail — ZiadaRx{% endblock %}
+{% block page_title %}Products Trail{% endblock %}
+
+{% block content %}
+<div class="card mb-4" style="overflow: visible;">
+  <div class="card-header"><h2>Filter</h2></div>
+  <div class="card-body" style="overflow: visible;">
+    <form method="get" class="flex gap-3 items-center">
+      <div class="form-group" style="margin:0; width:320px;">
+        <select name="product_id" class="form-input search-select" required>
+          <option value="">Select Product</option>
+          {% for p in product_options %}
+          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if can_select_branch %}
+      <div class="form-group" style="margin:0; width:220px;">
+        <select name="branch_id" class="form-input search-select">
+          <option value="all" {% if active_branch_id == "all" %}selected{% endif %}>All Branches</option>
+          {% for b in branch_options %}
+          <option value="{{ b.id }}" {% if active_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <button type="submit" class="btn btn-primary">View Trail</button>
+    </form>
+    {% if selected_product and trail_data %}
+    <div class="text-muted text-sm mt-2">
+      Trail period:
+      {% if trail_data.start_date %}
+      <strong>{{ trail_data.start_date|date:"d M Y" }}</strong> to <strong>{{ trail_data.end_date|date:"d M Y" }}</strong>
+      {% else %}
+      No movement history found yet.
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if selected_product and trail_data and trail_data.summary %}
+<div class="stats-grid" style="margin-bottom:16px">
+  <div class="stat-card blue">
+    <div class="label">Total Events</div>
+    <div class="value">{{ trail_data.summary.total_events }}</div>
+  </div>
+  <div class="stat-card green">
+    <div class="label">Total In</div>
+    <div class="value">{{ trail_data.summary.total_in }}</div>
+  </div>
+  <div class="stat-card red">
+    <div class="label">Total Out</div>
+    <div class="value">{{ trail_data.summary.total_out }}</div>
+  </div>
+  <div class="stat-card yellow">
+    <div class="label">Running Balance</div>
+    <div class="value">{{ trail_data.summary.current_balance }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>{{ selected_product.name }} Trail</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Branch</th>
+          <th>Quantity</th>
+          <th>Running Stock</th>
+          <th>Reference</th>
+          <th>Details</th>
+          <th>Recorded By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in trail_data.rows %}
+        <tr>
+          <td>{{ row.created_at|date:"d M Y H:i" }}</td>
+          <td>{{ row.movement_type_display }}</td>
+          <td>{{ row.branch_name }}</td>
+          <td class="{% if row.quantity < 0 %}text-danger{% elif row.quantity > 0 %}text-success{% endif %}">{{ row.quantity }}</td>
+          <td>{{ row.running_stock }}</td>
+          <td>{{ row.reference }}</td>
+          <td>{{ row.detail }}</td>
+          <td>{{ row.created_by }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% elif selected_product %}
+<div class="card" style="padding:24px;">
+  <div class="empty-state">No movement history found for this product.</div>
+</div>
+{% endif %}
+{% endblock %}
