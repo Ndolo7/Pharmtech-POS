@@ -333,6 +333,28 @@ class ReportsBranchScopeTests(TestCase):
         self.assertNotContains(response, "Month Gross Profit")
 
     def test_sales_report_transaction_history_is_super_admin_only(self):
+        product_a = Product.objects.create(
+            name="Txn Product A",
+            barcode="TXN-PROD-A-001",
+            description="",
+            unit_price=Decimal("100.00"),
+            cost_price=Decimal("60.00"),
+            reorder_level=2,
+            max_stock=20,
+            pack_quantity=1,
+            is_active=True,
+        )
+        product_b = Product.objects.create(
+            name="Txn Product B",
+            barcode="TXN-PROD-B-001",
+            description="",
+            unit_price=Decimal("150.00"),
+            cost_price=Decimal("80.00"),
+            reorder_level=2,
+            max_stock=20,
+            pack_quantity=1,
+            is_active=True,
+        )
         sale = Sale.objects.create(
             receipt_number="RCP-ORD-001",
             branch=self.wendani,
@@ -342,6 +364,20 @@ class ReportsBranchScopeTests(TestCase):
             mpesa_amount=Decimal("0.00"),
             total_amount=Decimal("450.00"),
         )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product_a,
+            quantity=2,
+            unit_price=Decimal("100.00"),
+            total_price=Decimal("200.00"),
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product_b,
+            quantity=1,
+            unit_price=Decimal("250.00"),
+            total_price=Decimal("250.00"),
+        )
         Sale.objects.filter(pk=sale.pk).update(
             created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
         )
@@ -349,11 +385,18 @@ class ReportsBranchScopeTests(TestCase):
         self.client.force_login(self.super_admin)
         admin_response = self.client.get(
             reverse("sales-report"),
-            {"start_date": "2026-04-15", "end_date": "2026-04-15", "tab": "transactions"},
+            {
+                "start_date": "2026-04-15",
+                "end_date": "2026-04-15",
+                "tab": "transactions",
+                "product_id": str(product_a.pk),
+            },
         )
         self.assertEqual(admin_response.status_code, 200)
         self.assertContains(admin_response, "Transaction History")
         self.assertContains(admin_response, "RCP-ORD-001")
+        self.assertContains(admin_response, "<td>Txn Product A</td>", html=True)
+        self.assertNotContains(admin_response, "<td>Txn Product B</td>", html=True)
 
         cashier = User.objects.create_user(
             username="cashier_orders",
