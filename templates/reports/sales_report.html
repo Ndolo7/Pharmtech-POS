@@ -36,6 +36,9 @@
     {% if not can_select_branch and active_branch %}
     <div class="text-muted text-sm mt-2">Showing branch: <strong>{{ active_branch.name }}</strong></div>
     {% endif %}
+    {% if can_view_transactions %}
+    <div class="text-muted text-sm mt-2">Use the Transaction History tab to filter and trace sales by product.</div>
+    {% endif %}
   </div>
 </div>
 

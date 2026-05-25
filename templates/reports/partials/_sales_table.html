@@ -7,7 +7,7 @@
       <button
         type="button"
         class="btn {% if tab == 'daily' or not tab %}btn-primary{% else %}btn-secondary{% endif %}"
-        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&tab=daily"
+        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&product_id={{ product_id|default:'all' }}&tab=daily"
         hx-target="#report-results"
         hx-swap="innerHTML"
       >
@@ -17,11 +17,11 @@
       <button
         type="button"
         class="btn {% if tab == 'transactions' %}btn-primary{% else %}btn-secondary{% endif %}"
-        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&tab=transactions"
+        hx-get="{% url 'sales-report' %}?start_date={{ start_date }}&end_date={{ end_date }}&branch_id={{ active_branch_id }}&product_id={{ product_id|default:'all' }}&tab=transactions"
         hx-target="#report-results"
         hx-swap="innerHTML"
       >
-        Transaction History ({{ data.transactions.summary.total_transactions|default:0 }})
+        Transaction History ({{ data.transactions.summary.total_rows|default:0 }})
       </button>
       {% endif %}
     </div>
@@ -29,13 +29,37 @@
 
   {% if tab == "transactions" and can_view_transactions %}
   <!-- Transaction History -->
+  <div class="card mb-3" style="padding:12px 14px;">
+    <form
+      hx-get="{% url 'sales-report' %}"
+      hx-target="#report-results"
+      hx-swap="innerHTML"
+      class="flex gap-2 items-center"
+    >
+      <input type="hidden" name="start_date" value="{{ start_date }}">
+      <input type="hidden" name="end_date" value="{{ end_date }}">
+      <input type="hidden" name="branch_id" value="{{ active_branch_id|default:'all' }}">
+      <input type="hidden" name="tab" value="transactions">
+      <div class="form-group" style="margin:0; width:280px;">
+        <select name="product_id" class="form-input search-select">
+          <option value="all" {% if product_id == "all" %}selected{% endif %}>All Products</option>
+          {% for p in product_options %}
+          <option value="{{ p.id }}" {% if product_id == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Apply Product Filter</button>
+    </form>
+  </div>
+
   <div class="stats-grid" style="margin-bottom:16px">
     <div class="stat-card blue">
-      <div class="label">Total Transactions</div>
-      <div class="value">{{ data.transactions.summary.total_transactions|default:0 }}</div>
+      <div class="label">Matching Rows</div>
+      <div class="value">{{ data.transactions.summary.total_rows|default:0 }}</div>
+      <div class="text-muted text-sm mt-1">{{ data.transactions.summary.total_quantity|default:0 }} units</div>
     </div>
     <div class="stat-card green">
-      <div class="label">Total Sales</div>
+      <div class="label">Total Line Amount</div>
       <div class="value">KES {{ data.transactions.summary.total_amount|default:0|floatformat:0 }}</div>
     </div>
   </div>
@@ -52,11 +76,14 @@
             <th>Branch</th>
             <th>Cashier</th>
             <th>Payment</th>
-            <th>Items</th>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Unit Price</th>
+            <th>Line Total</th>
             <th>Cash</th>
             <th>M-Pesa</th>
             <th>Credit</th>
-            <th>Total</th>
+            <th>Sale Total</th>
           </tr>
         </thead>
         <tbody>
@@ -68,18 +95,14 @@
             <td style="padding:10px 12px; width:28px; color:#fff">
               <span x-text="open ? '▾' : '▸'" style="font-size:12px; color:#fff"></span>
             </td>
-            <td colspan="5" style="font-weight:600; padding:10px 0; color:#fff">
-              {{ group.date_display }}
-              <span style="margin-left:8px; font-weight:400; color:rgba(255,255,255,.8)">
-                {{ group.count }} sale{{ group.count|pluralize }}
-                · {{ group.total_items }} item{{ group.total_items|pluralize }}
+            <td colspan="13" style="font-weight:600; padding:10px 0; color:#fff">
+                {{ group.date_display }}
+                <span style="margin-left:8px; font-weight:400; color:rgba(255,255,255,.8)">
+                {{ group.count }} line{{ group.count|pluralize }}
+                · {{ group.total_quantity }} unit{{ group.total_quantity|pluralize }}
+                · KES {{ group.total_amount|floatformat:2 }}
               </span>
             </td>
-            <td style="color:#fff"></td>
-            <td style="font-weight:600; color:#fff">KES {{ group.total_cash|floatformat:2 }}</td>
-            <td style="font-weight:600; color:#fff">KES {{ group.total_mpesa|floatformat:2 }}</td>
-            <td style="font-weight:600; color:#fff">KES {{ group.total_credit|floatformat:2 }}</td>
-            <td style="font-weight:700; color:#fff">KES {{ group.total_amount|floatformat:2 }}</td>
           </tr>
           <!-- Individual sale rows for this date -->
           {% for row in group.rows %}
@@ -93,11 +116,14 @@
             <td>{{ row.branch_name }}</td>
             <td>{{ row.cashier_name }}</td>
             <td>{{ row.payment_method }}</td>
-            <td>{{ row.items_count }}</td>
+            <td>{{ row.product_name }}</td>
+            <td>{{ row.quantity }}</td>
+            <td>KES {{ row.unit_price|floatformat:2 }}</td>
+            <td>KES {{ row.line_total|floatformat:2 }}</td>
             <td>KES {{ row.cash_amount|floatformat:2 }}</td>
             <td>KES {{ row.mpesa_amount|floatformat:2 }}</td>
             <td>KES {{ row.credit_amount|floatformat:2 }}</td>
-            <td class="font-bold">KES {{ row.total_amount|floatformat:2 }}</td>
+            <td class="font-bold">KES {{ row.sale_total|floatformat:2 }}</td>
           </tr>
           {% endfor %}
           {% endfor %}
