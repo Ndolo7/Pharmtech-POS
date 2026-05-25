@@ -85,6 +85,12 @@
           <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M9 2h6"/><path d="M12 2v5"/><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
           Orders Report
         </a>
+        {% if request.user.is_superuser or request.user.role == "super_admin" %}
+        <a href="/reports/products-trail/" title="Products Trail" {% if request.path == "/reports/products-trail/" %}class="active"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" class="submenu-icon" stroke="currentColor" stroke-width="2"><path d="M3 7h18"/><path d="M6 3h12v18H6z"/><path d="M9 11h6"/><path d="M9 15h6"/></svg>
+          Products Trail
+        </a>
+        {% endif %}
       </div>
     </div>
 
