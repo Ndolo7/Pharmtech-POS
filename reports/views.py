@@ -1,4 +1,5 @@
 from django.contrib.auth.decorators import login_required
+from django.http import HttpResponseForbidden
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Sum, Count
 from django.utils import timezone
@@ -7,7 +8,15 @@ from decimal import Decimal
 from django.views.decorators.http import require_GET
 from branches.models import Branch
 from sales.models import Sale, Shift, ShiftExpense
-from products.models import AutoReorderRequest, Product, Purchase, Supplier, SupplierReorderRequest
+from products.models import (
+    AutoReorderRequest,
+    Product,
+    Purchase,
+    StockMovement,
+    Supplier,
+    SupplierReorderRequest,
+    Transfer,
+)
 
 
 def _can_select_report_branch(user):
@@ -98,6 +107,10 @@ def _orders_summary(orders, rows):
         "exhausted_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_EXHAUSTED),
         "cancelled_count": sum(1 for order in orders if order.status == AutoReorderRequest.STATUS_CANCELLED),
     }
+
+
+def _is_super_admin(user):
+    return user.is_superuser or getattr(user, "role", "") == "super_admin"
 
 
 @login_required
@@ -553,6 +566,136 @@ def orders_report_view(request):
     if request.htmx:
         return render(request, "reports/partials/_orders_table.html", ctx)
     return render(request, "reports/orders_report.html", ctx)
+
+
+@login_required
+def products_trail_report_view(request):
+    if not _is_super_admin(request.user):
+        return HttpResponseForbidden("Permission denied.")
+
+    branch_ctx = _report_branch_context(request)
+    active_branch = branch_ctx["active_branch"]
+    product_options = Product.objects.filter(is_active=True).order_by("name")
+    product_id = (request.GET.get("product_id") or "").strip()
+
+    selected_product = None
+    trail_data = None
+    if product_id:
+        selected_product = product_options.filter(pk=product_id).first()
+        if selected_product:
+            movements_qs = StockMovement.objects.filter(product=selected_product).select_related(
+                "branch", "created_by"
+            )
+            if active_branch:
+                movements_qs = movements_qs.filter(branch=active_branch)
+            movements_qs = movements_qs.order_by("created_at", "id")
+
+            movements = list(movements_qs)
+            if movements:
+                sale_refs = {m.reference for m in movements if m.movement_type == "sale" and m.reference}
+                sales_by_receipt = {
+                    s.receipt_number: s
+                    for s in Sale.objects.filter(receipt_number__in=sale_refs).select_related("cashier", "branch")
+                }
+
+                transfer_ids = set()
+                for movement in movements:
+                    if movement.reference.startswith("TRF-"):
+                        try:
+                            transfer_ids.add(int(movement.reference.split("-", 1)[1]))
+                        except (TypeError, ValueError):
+                            continue
+                transfers_by_id = {
+                    t.id: t
+                    for t in Transfer.objects.filter(id__in=transfer_ids).select_related(
+                        "from_branch", "to_branch", "created_by"
+                    )
+                }
+
+                purchase_refs = {m.reference for m in movements if m.movement_type == "purchase" and m.reference}
+                purchases_by_invoice = {
+                    p.invoice_number: p
+                    for p in Purchase.objects.filter(invoice_number__in=purchase_refs).select_related(
+                        "supplier", "created_by", "branch"
+                    )
+                }
+
+                running_stock = 0
+                rows = []
+                for movement in movements:
+                    running_stock += movement.quantity
+                    detail = ""
+                    if movement.movement_type == "sale":
+                        sale = sales_by_receipt.get(movement.reference)
+                        if sale:
+                            detail = (
+                                f"Receipt {sale.receipt_number} · {sale.get_payment_method_display()} · "
+                                f"Cashier: {sale.cashier.get_full_name() or sale.cashier.username}"
+                            )
+                        else:
+                            detail = f"Receipt {movement.reference}"
+                    elif movement.movement_type in {"transfer_in", "transfer_out"} and movement.reference.startswith("TRF-"):
+                        try:
+                            transfer_id = int(movement.reference.split("-", 1)[1])
+                        except (TypeError, ValueError):
+                            transfer_id = None
+                        transfer = transfers_by_id.get(transfer_id) if transfer_id else None
+                        if transfer:
+                            detail = (
+                                f"Transfer {transfer.id} · From {transfer.from_branch.name} "
+                                f"to {transfer.to_branch.name}"
+                            )
+                        else:
+                            detail = movement.reference
+                    elif movement.movement_type == "purchase":
+                        purchase = purchases_by_invoice.get(movement.reference)
+                        if purchase:
+                            detail = (
+                                f"Invoice {purchase.invoice_number} · Supplier: {purchase.supplier.name}"
+                            )
+                        else:
+                            detail = f"Invoice {movement.reference}"
+                    elif movement.movement_type == "adjustment":
+                        detail = movement.notes or "Manual stock adjustment"
+
+                    rows.append(
+                        {
+                            "created_at": timezone.localtime(movement.created_at),
+                            "movement_type_display": movement.get_movement_type_display(),
+                            "branch_name": movement.branch.name,
+                            "quantity": movement.quantity,
+                            "running_stock": running_stock,
+                            "reference": movement.reference or "-",
+                            "detail": detail or "-",
+                            "created_by": movement.created_by.get_full_name() or movement.created_by.username,
+                        }
+                    )
+
+                trail_data = {
+                    "start_date": timezone.localtime(movements[0].created_at).date(),
+                    "end_date": timezone.localdate(),
+                    "rows": rows,
+                    "summary": {
+                        "total_events": len(rows),
+                        "total_in": sum((max(row["quantity"], 0) for row in rows), 0),
+                        "total_out": sum((abs(min(row["quantity"], 0)) for row in rows), 0),
+                        "current_balance": rows[-1]["running_stock"],
+                    },
+                }
+            else:
+                trail_data = {"start_date": None, "end_date": timezone.localdate(), "rows": [], "summary": None}
+
+    return render(
+        request,
+        "reports/product_trail_report.html",
+        {
+            "product_options": product_options,
+            "product_id": str(selected_product.pk) if selected_product else "",
+            "selected_product": selected_product,
+            "trail_data": trail_data,
+            **branch_ctx,
+        },
+    )
 
 
 @login_required
