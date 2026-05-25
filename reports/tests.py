@@ -7,7 +7,16 @@ from django.utils import timezone
 
 from accounts.models import User
 from branches.models import Branch
-from products.models import AutoReorderRequest, Product, Purchase, PurchaseItem, Supplier, SupplierReorderRequest
+from products.models import (
+    AutoReorderRequest,
+    Product,
+    Purchase,
+    PurchaseItem,
+    StockMovement,
+    Supplier,
+    SupplierReorderRequest,
+    Transfer,
+)
 from sales.models import Sale, SaleItem, Shift, ShiftExpense
 
 
@@ -412,6 +421,105 @@ class ReportsBranchScopeTests(TestCase):
         self.assertEqual(cashier_response.status_code, 200)
         self.assertNotContains(cashier_response, "Transaction History")
         self.assertNotContains(cashier_response, "RCP-ORD-001")
+
+    def test_products_trail_report_is_super_admin_only(self):
+        cashier = User.objects.create_user(
+            username="cashier_trail",
+            password="pass12345",
+            role="cashier",
+            branch=self.wendani,
+        )
+        self.client.force_login(cashier)
+        response = self.client.get(reverse("products-trail-report"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_products_trail_report_shows_sales_and_transfer_history(self):
+        product = Product.objects.create(
+            name="Trail Product",
+            barcode="TRAIL-001",
+            description="",
+            unit_price=Decimal("120.00"),
+            cost_price=Decimal("70.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=1,
+            is_active=True,
+        )
+        purchase = Purchase.objects.create(
+            supplier=self.supplier,
+            branch=self.wendani,
+            invoice_number="INV-TRAIL-001",
+            total_amount=Decimal("700.00"),
+            created_by=self.super_admin,
+        )
+        sale = Sale.objects.create(
+            receipt_number="RCP-TRAIL-001",
+            branch=self.wendani,
+            cashier=self.super_admin,
+            payment_method="cash",
+            cash_amount=Decimal("360.00"),
+            mpesa_amount=Decimal("0.00"),
+            total_amount=Decimal("360.00"),
+        )
+        transfer = Transfer.objects.create(
+            from_branch=self.wendani,
+            to_branch=self.sukari,
+            created_by=self.super_admin,
+            notes="Rebalance",
+        )
+
+        purchase_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="purchase",
+            quantity=10,
+            reference="INV-TRAIL-001",
+            created_by=self.super_admin,
+        )
+        sale_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="sale",
+            quantity=-3,
+            reference="RCP-TRAIL-001",
+            created_by=self.super_admin,
+        )
+        transfer_out_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="transfer_out",
+            quantity=-2,
+            reference=f"TRF-{transfer.id}",
+            created_by=self.super_admin,
+        )
+        transfer_in_move = StockMovement.objects.create(
+            product=product,
+            branch=self.sukari,
+            movement_type="transfer_in",
+            quantity=2,
+            reference=f"TRF-{transfer.id}",
+            created_by=self.super_admin,
+        )
+
+        base_dt = timezone.make_aware(datetime(2026, 4, 10, 9, 0, 0))
+        StockMovement.objects.filter(pk=purchase_move.pk).update(created_at=base_dt)
+        StockMovement.objects.filter(pk=sale_move.pk).update(created_at=base_dt + timedelta(days=1))
+        StockMovement.objects.filter(pk=transfer_out_move.pk).update(created_at=base_dt + timedelta(days=2))
+        StockMovement.objects.filter(pk=transfer_in_move.pk).update(created_at=base_dt + timedelta(days=2, hours=1))
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("products-trail-report"),
+            {"product_id": str(product.pk)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Trail Product Trail")
+        self.assertContains(response, "Receipt RCP-TRAIL-001")
+        self.assertContains(response, f"Transfer {transfer.id}")
+        self.assertContains(response, "Invoice INV-TRAIL-001")
+        self.assertContains(response, "10")
+        self.assertContains(response, "-3")
 
 
 class DailySalesBreakdownModalTests(TestCase):
