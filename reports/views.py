@@ -577,10 +577,25 @@ def products_trail_report_view(request):
     active_branch = branch_ctx["active_branch"]
     product_options = Product.objects.filter(is_active=True).order_by("name")
     product_id = (request.GET.get("product_id") or "").strip()
+    start_date = (request.GET.get("start_date") or "").strip()
+    end_date = (request.GET.get("end_date") or "").strip()
+    errors = None
+
+    start_date_value = None
+    end_date_value = None
+    try:
+        if start_date:
+            start_date_value = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if end_date:
+            end_date_value = datetime.strptime(end_date, "%Y-%m-%d").date()
+        if start_date_value and end_date_value and start_date_value > end_date_value:
+            errors = "Start date cannot be after end date."
+    except ValueError:
+        errors = "Invalid date format."
 
     selected_product = None
     trail_data = None
-    if product_id:
+    if product_id and not errors:
         selected_product = product_options.filter(pk=product_id).first()
         if selected_product:
             movements_qs = StockMovement.objects.filter(product=selected_product).select_related(
@@ -588,6 +603,10 @@ def products_trail_report_view(request):
             )
             if active_branch:
                 movements_qs = movements_qs.filter(branch=active_branch)
+            if start_date_value:
+                movements_qs = movements_qs.filter(created_at__date__gte=start_date_value)
+            if end_date_value:
+                movements_qs = movements_qs.filter(created_at__date__lte=end_date_value)
             movements_qs = movements_qs.order_by("created_at", "id")
 
             movements = list(movements_qs)
@@ -673,7 +692,7 @@ def products_trail_report_view(request):
 
                 trail_data = {
                     "start_date": timezone.localtime(movements[0].created_at).date(),
-                    "end_date": timezone.localdate(),
+                    "end_date": timezone.localtime(movements[-1].created_at).date(),
                     "rows": rows,
                     "summary": {
                         "total_events": len(rows),
@@ -683,7 +702,7 @@ def products_trail_report_view(request):
                     },
                 }
             else:
-                trail_data = {"start_date": None, "end_date": timezone.localdate(), "rows": [], "summary": None}
+                trail_data = {"start_date": None, "end_date": None, "rows": [], "summary": None}
 
     return render(
         request,
@@ -693,6 +712,9 @@ def products_trail_report_view(request):
             "product_id": str(selected_product.pk) if selected_product else "",
             "selected_product": selected_product,
             "trail_data": trail_data,
+            "start_date": start_date,
+            "end_date": end_date,
+            "errors": errors,
             **branch_ctx,
         },
     )

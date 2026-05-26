@@ -521,6 +521,56 @@ class ReportsBranchScopeTests(TestCase):
         self.assertContains(response, "10")
         self.assertContains(response, "-3")
 
+    def test_products_trail_report_honors_date_range(self):
+        product = Product.objects.create(
+            name="Trail Date Product",
+            barcode="TRAIL-DATE-001",
+            description="",
+            unit_price=Decimal("100.00"),
+            cost_price=Decimal("60.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=1,
+            is_active=True,
+        )
+        old_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="sale",
+            quantity=-1,
+            reference="RCP-OLD-001",
+            created_by=self.super_admin,
+        )
+        in_range_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="sale",
+            quantity=-2,
+            reference="RCP-IN-001",
+            created_by=self.super_admin,
+        )
+
+        StockMovement.objects.filter(pk=old_move.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 1, 9, 0, 0))
+        )
+        StockMovement.objects.filter(pk=in_range_move.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("products-trail-report"),
+            {
+                "product_id": str(product.pk),
+                "start_date": "2026-04-10",
+                "end_date": "2026-04-20",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "RCP-IN-001")
+        self.assertNotContains(response, "RCP-OLD-001")
+
 
 class DailySalesBreakdownModalTests(TestCase):
     def setUp(self):
