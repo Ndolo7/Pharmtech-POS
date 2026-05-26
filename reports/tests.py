@@ -571,6 +571,56 @@ class ReportsBranchScopeTests(TestCase):
         self.assertContains(response, "RCP-IN-001")
         self.assertNotContains(response, "RCP-OLD-001")
 
+    def test_products_trail_report_never_shows_negative_running_stock(self):
+        product = Product.objects.create(
+            name="Trail Non Negative Product",
+            barcode="TRAIL-NONNEG-001",
+            description="",
+            unit_price=Decimal("80.00"),
+            cost_price=Decimal("40.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=1,
+            is_active=True,
+        )
+        purchase_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="purchase",
+            quantity=5,
+            reference="INV-NONNEG-001",
+            created_by=self.super_admin,
+        )
+        sale_move = StockMovement.objects.create(
+            product=product,
+            branch=self.wendani,
+            movement_type="sale",
+            quantity=-6,
+            reference="RCP-NONNEG-001",
+            created_by=self.super_admin,
+        )
+
+        StockMovement.objects.filter(pk=purchase_move.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 1, 9, 0, 0))
+        )
+        StockMovement.objects.filter(pk=sale_move.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 4, 15, 9, 0, 0))
+        )
+
+        self.client.force_login(self.super_admin)
+        response = self.client.get(
+            reverse("products-trail-report"),
+            {
+                "product_id": str(product.pk),
+                "start_date": "2026-04-10",
+                "end_date": "2026-04-20",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["trail_data"]["rows"][0]["running_stock"], 0)
+        self.assertEqual(response.context["trail_data"]["summary"]["current_balance"], 0)
+
 
 class DailySalesBreakdownModalTests(TestCase):
     def setUp(self):
