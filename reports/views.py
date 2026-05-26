@@ -598,11 +598,22 @@ def products_trail_report_view(request):
     if product_id and not errors:
         selected_product = product_options.filter(pk=product_id).first()
         if selected_product:
-            movements_qs = StockMovement.objects.filter(product=selected_product).select_related(
+            base_movements_qs = StockMovement.objects.filter(product=selected_product)
+            if active_branch:
+                base_movements_qs = base_movements_qs.filter(branch=active_branch)
+
+            opening_balance = 0
+            if start_date_value:
+                opening_balance = (
+                    base_movements_qs.filter(created_at__date__lt=start_date_value).aggregate(total=Sum("quantity"))[
+                        "total"
+                    ]
+                    or 0
+                )
+
+            movements_qs = base_movements_qs.select_related(
                 "branch", "created_by"
             )
-            if active_branch:
-                movements_qs = movements_qs.filter(branch=active_branch)
             if start_date_value:
                 movements_qs = movements_qs.filter(created_at__date__gte=start_date_value)
             if end_date_value:
@@ -639,10 +650,11 @@ def products_trail_report_view(request):
                     )
                 }
 
-                running_stock = 0
+                running_stock = opening_balance
                 rows = []
                 for movement in movements:
                     running_stock += movement.quantity
+                    display_running_stock = max(running_stock, 0)
                     detail = ""
                     if movement.movement_type == "sale":
                         sale = sales_by_receipt.get(movement.reference)
@@ -683,7 +695,7 @@ def products_trail_report_view(request):
                             "movement_type_display": movement.get_movement_type_display(),
                             "branch_name": movement.branch.name,
                             "quantity": movement.quantity,
-                            "running_stock": running_stock,
+                            "running_stock": display_running_stock,
                             "reference": movement.reference or "-",
                             "detail": detail or "-",
                             "created_by": movement.created_by.get_full_name() or movement.created_by.username,
@@ -698,7 +710,7 @@ def products_trail_report_view(request):
                         "total_events": len(rows),
                         "total_in": sum((max(row["quantity"], 0) for row in rows), 0),
                         "total_out": sum((abs(min(row["quantity"], 0)) for row in rows), 0),
-                        "current_balance": rows[-1]["running_stock"],
+                        "current_balance": max(running_stock, 0),
                     },
                 }
             else:
