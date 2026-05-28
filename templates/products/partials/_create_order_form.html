@@ -191,7 +191,10 @@
       const productId = productSelect?.value || "";
       const branchId = resolveBranchId(row, branchSelect);
       const branchCapacity = (capacityData[productId] && capacityData[productId][branchId]) ? capacityData[productId][branchId] : null;
-      const maxPackets = branchCapacity ? parseIntSafe(branchCapacity.max_packets) : (selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null);
+      // headroomPackets = remaining room to max stock (may be 0 when at/above max)
+      const headroomPackets = branchCapacity ? parseIntSafe(branchCapacity.max_packets) : null;
+      // absoluteMaxPackets = ceil(max_stock / pack_size) — the hard cap for manual orders
+      const absoluteMaxPackets = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null;
       const packQty = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-pack-qty")) : null;
       const maxStock = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-stock")) : null;
       const availableUnits = branchCapacity ? parseIntSafe(branchCapacity.available_units) : null;
@@ -212,24 +215,22 @@
         if (!packets || packets <= 0) {
           rowValid = false;
           errorText = "Packets must be a positive whole number.";
-        } else if (maxPackets === null || packets > maxPackets) {
+        } else if (absoluteMaxPackets !== null && packets > absoluteMaxPackets) {
+          // Cap at absolute max (max_stock / pack_size), not at remaining headroom.
+          // This allows ordering even when current+pending stock already meets max.
           rowValid = false;
-          if (maxPackets !== null && currentUnits !== null && pendingUnits !== null && maxStock !== null) {
-            errorText = `Max additional allowed now: ${maxPackets} packet(s).`;
-          } else {
-            errorText = `Max additional allowed now: ${maxPackets || 0} packet(s).`;
-          }
+          errorText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
         }
       }
 
-      if (packetsInput && maxPackets !== null) {
-        packetsInput.max = String(maxPackets);
+      if (packetsInput && absoluteMaxPackets !== null) {
+        packetsInput.max = String(absoluteMaxPackets);
       }
 
-      if (maxPackets !== null && packQty && maxStock && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
-        helperText = `Needed: ${maxPackets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
-      } else if (maxPackets !== null && packQty && maxStock) {
-        helperText = `Max ${maxPackets} packet(s) allowed (max stock ${maxStock} units, ${packQty} unit(s)/packet).`;
+      if (headroomPackets !== null && packQty && maxStock && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
+        helperText = `Needed: ${headroomPackets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
+      } else if (absoluteMaxPackets !== null && packQty && maxStock) {
+        helperText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
       } else {
         helperText = "Amount is in supplier packet sizes, not individual units.";
       }
