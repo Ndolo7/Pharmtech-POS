@@ -356,24 +356,20 @@ def manual_order_create_view(request):
         for product_id, branch_id, packets in parsed_lines:
             grouped_lines[(product_id, branch_id)] += packets
 
+        # Validate each line against the absolute max packets (max_stock / pack_size).
+        # Unlike the headroom cap (which is 0 when stock already meets max), this
+        # allows manual orders even when current+pending stock already meets max stock,
+        # as long as the order size itself doesn't exceed the product's packet capacity.
         for (product_id, branch_id), requested_packets in grouped_lines.items():
             product = product_map[product_id]
-            branch = branch_map[branch_id]
             pack_quantity = max(int(product.pack_quantity or 1), 1)
             max_stock_units = max(int(product.max_stock or 1), 1)
-            current_branch_units = max(int(product.current_stock(branch) or 0), 0)
-            pending_packets_for_branch = pending_packets_map.get((product_id, branch.name), 0)
-            pending_branch_units = pending_packets_for_branch * pack_quantity
-            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
-            max_additional_packets = available_units // pack_quantity
+            absolute_max_packets = max_stock_units // pack_quantity
 
-            if requested_packets > max_additional_packets:
+            if requested_packets > absolute_max_packets:
                 return HttpResponseBadRequest(
-                    (
-                        f"{product.name} for {branch.name} can only accept {max_additional_packets} more packet(s) "
-                        f"without exceeding max stock ({max_stock_units} units). "
-                        f"Current stock: {current_branch_units} unit(s), open ordered: {pending_branch_units} unit(s)."
-                    )
+                    f"{product.name} can only be ordered in up to {absolute_max_packets} packet(s) "
+                    f"(max stock: {max_stock_units} units, pack size: {pack_quantity} units/packet)."
                 )
 
         reorder_ids = set()
