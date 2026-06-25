@@ -229,7 +229,7 @@ def _supplier_reorder_response_link(supplier_request: SupplierReorderRequest) ->
 def _supplier_reorder_message_text(supplier_request: SupplierReorderRequest, response_link: str) -> str:
     return (
         f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
-        "Please click this link. Supply requested. What you do have, tick it. You must respond within 1 hour:\n"
+        "Please click this link. Supply requested. What you do have, tick it. You must respond within 3 hours:\n"
         f"{response_link}\n\n"
     )
 
