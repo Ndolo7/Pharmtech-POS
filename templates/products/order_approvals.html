@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Order Approvals — ZiadaRx{% endblock %}
+{% block page_title %}Order Approvals{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+  <div class="card-header"><h2>Pending Manual Orders</h2></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Branch</th>
+            <th>Packets</th>
+            <th>Created By</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for order in pending_manual_orders %}
+          <tr>
+            <td class="font-medium">{{ order.product.name }}</td>
+            <td>
+              {% for branch_name, qty in order.branch_requirements.items %}
+                <div>{{ branch_name }}: {{ qty }} packet(s)</div>
+              {% empty %}
+                <span class="text-muted">-</span>
+              {% endfor %}
+            </td>
+            <td>{{ order.requested_quantity }}</td>
+            <td>{% if order.created_by %}{{ order.created_by.get_full_name|default:order.created_by.username }}{% else %}-{% endif %}</td>
+            <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+            <td>
+              <form method="post" action="{% url 'manual-order-approval-action' order.id %}" class="flex gap-2">
+                {% csrf_token %}
+                <button type="submit" name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
+                <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger">Reject</button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="6"><div class="empty-state">No manual orders are waiting for approval.</div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Pending Branch Supply Requests</h2></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Source Branch</th>
+            <th>Destination Branch</th>
+            <th>Qty</th>
+            <th>Created By</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for req in pending_branch_supply_requests %}
+          <tr>
+            <td class="font-medium">{{ req.product.name }}</td>
+            <td>{{ req.source_branch.name }}</td>
+            <td>{{ req.destination_branch.name }}</td>
+            <td>{{ req.requested_quantity }}</td>
+            <td>{% if req.created_by %}{{ req.created_by.get_full_name|default:req.created_by.username }}{% else %}System{% endif %}</td>
+            <td>{{ req.created_at|date:"Y-m-d H:i" }}</td>
+            <td>
+              <form method="post" action="{% url 'branch-supply-request-action' req.id %}" class="flex gap-2">
+                {% csrf_token %}
+                <button type="submit" name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
+                <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger">Reject</button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="7"><div class="empty-state">No branch supply requests are waiting for approval.</div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
