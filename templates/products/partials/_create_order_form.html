@@ -1,5 +1,5 @@
 <div {% if request.htmx %}class="modal-backdrop"{% endif %} x-data {% if request.htmx %}@click.self="document.getElementById('modal-container').innerHTML=''"{% endif %}>
-  <div {% if request.htmx %}class="modal" style="max-width:760px"{% endif %}>
+  <div {% if request.htmx %}class="modal" style="max-width:900px"{% endif %}>
     <div class="{% if request.htmx %}modal-header{% else %}mb-4 border-b pb-2{% endif %}">
       <h3 {% if not request.htmx %}class="text-lg font-bold"{% endif %}>Create Manual Order</h3>
       {% if request.htmx %}<button class="btn-icon" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>{% endif %}
@@ -26,7 +26,7 @@
             <label>Suppliers *</label>
             <select name="supplier_id[]" class="form-input search-select" multiple>
               {% for s in suppliers %}
-              <option value="{{ s.id }}">{{ s.name }}</option>
+              <option value="{{ s.id }}">{{ s.name }}{% if s.branch %} - {{ s.branch.name }}{% endif %}</option>
               {% endfor %}
             </select>
             <small class="text-muted">Only these suppliers will receive this manual order.</small>
@@ -37,63 +37,52 @@
             <small class="text-muted">No supplier cascade will run for this order.</small>
           </div>
         </div>
-        {% if not can_select_branch and active_branch %}
+
+        {% if can_select_branch %}
+        <div class="message message-info" style="margin-bottom:12px;max-width:none">
+          Select a branch once per group, then add many products under it.
+        </div>
+        {% elif active_branch %}
         <div class="message message-info" style="margin-bottom:12px;max-width:none">
           Ordering for branch: <strong>{{ active_branch.name }}</strong>
         </div>
         {% endif %}
 
-        <div id="manual-order-rows" data-can-select-branch="{% if can_select_branch %}1{% else %}0{% endif %}">
-          <div class="manual-order-row" style="border:1px solid var(--gray-200);border-radius:12px;padding:12px;margin-bottom:10px;">
-            <div style="display:grid;grid-template-columns:2.1fr {% if can_select_branch %}1.5fr {% endif %}1fr auto;gap:8px;align-items:end;">
-              <div class="form-group" style="margin-bottom:0;">
-                <label>Product *</label>
-                <select name="product_id[]" class="form-input manual-order-product search-select" required>
-                  <option value="">Select product to order</option>
-                  {% for p in products %}
-                  <option
-                    value="{{ p.id }}"
-                    data-pack-qty="{{ p.pack_quantity|default:1 }}"
-                    data-max-stock="{{ p.max_stock }}"
-                    data-max-packets="{{ p.max_packets_allowed }}"
-                  >
-                    {{ p.name }}
-                  </option>
-                  {% endfor %}
-                </select>
-              </div>
-
+        <div id="manual-order-group-list" data-can-select-branch="{% if can_select_branch %}1{% else %}0{% endif %}">
+          <div class="manual-order-group card" style="padding:12px;margin-bottom:12px;" data-group-index="0">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
+              <strong>Branch Group</strong>
               {% if can_select_branch %}
-              <div class="form-group" style="margin-bottom:0;">
-                <label>Branch *</label>
-                <select name="branch_id[]" class="form-input manual-order-branch" required>
-                  <option value="">Select branch</option>
-                  {% for b in all_branches %}
-                  <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              {% else %}
-              <input type="hidden" name="branch_id[]" value="{{ active_branch_id|default:'' }}">
+              <button type="button" class="btn btn-sm btn-outline manual-order-remove-group" style="display:none;">Remove Branch Group</button>
               {% endif %}
-
-              <div class="form-group" style="margin-bottom:0;">
-                <label>Packets *</label>
-                <input type="number" name="packets[]" class="form-input manual-order-packets" required min="1" step="1" placeholder="e.g. 5">
-              </div>
-
-              <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
-                <button type="button" class="btn btn-outline manual-order-remove" style="white-space:nowrap;">Remove</button>
-              </div>
             </div>
-            <div class="manual-order-helper text-xs text-muted" style="margin-top:6px;"></div>
-            <div class="manual-order-error text-xs text-danger" style="margin-top:4px;display:none;"></div>
+            {% if can_select_branch %}
+            <div class="form-group" style="margin-bottom:10px;">
+              <label>Branch *</label>
+              <select class="form-input manual-order-group-branch search-select" required>
+                <option value="">Select branch</option>
+                {% for b in all_branches %}
+                <option value="{{ b.id }}" {% if b.id == active_branch_id %}selected{% endif %}>{{ b.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% else %}
+            <input type="hidden" class="manual-order-group-branch-hidden" value="{{ active_branch_id|default:'' }}">
+            {% endif %}
+
+            <div class="manual-order-rows" style="display:flex;flex-direction:column;gap:10px;"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:12px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-secondary manual-order-add-row">Add Product</button>
+              {% if can_select_branch %}
+              <small class="text-muted">Add more products under this branch, or create another branch group.</small>
+              {% endif %}
+            </div>
           </div>
         </div>
 
-        <button type="button" id="manual-order-add-row" class="btn btn-secondary" style="margin-top:4px;margin-bottom:12px;">
-          Add Product
-        </button>
+        {% if can_select_branch %}
+        <button type="button" id="manual-order-add-group" class="btn btn-outline" style="margin-top:4px;margin-bottom:12px;">Add Branch Group</button>
+        {% endif %}
 
         <div class="modal-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
@@ -111,13 +100,11 @@
   const form = document.getElementById("manual-order-form");
   if (!form) return;
 
-  const rowsContainer = document.getElementById("manual-order-rows");
-  const addButton = document.getElementById("manual-order-add-row");
+  const groupsContainer = document.getElementById("manual-order-group-list");
+  const addGroupButton = document.getElementById("manual-order-add-group");
   const submitButton = document.getElementById("manual-order-submit");
-  const canSelectBranch = rowsContainer?.dataset.canSelectBranch === "1";
+  const canSelectBranch = groupsContainer?.dataset.canSelectBranch === "1";
   const capacityDataNode = document.getElementById("manual-order-capacity-data");
-  const firstRow = rowsContainer?.querySelector(".manual-order-row");
-  const manualOrderRowTemplate = firstRow ? firstRow.cloneNode(true) : null;
   let capacityData = {};
 
   try {
@@ -131,10 +118,10 @@
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function normalizeSearchSelects(row) {
-    if (!row) return;
+  function normalizeSearchSelects(scope) {
+    if (!scope) return;
 
-    row.querySelectorAll(".ts-wrapper").forEach((wrapper) => {
+    scope.querySelectorAll(".ts-wrapper").forEach((wrapper) => {
       const underlyingSelect = wrapper.querySelector("select");
       if (underlyingSelect) {
         wrapper.replaceWith(underlyingSelect);
@@ -143,57 +130,117 @@
       }
     });
 
-    row.querySelectorAll("select.search-select").forEach((selectEl) => {
+    scope.querySelectorAll("select.search-select").forEach((selectEl) => {
       selectEl.classList.remove("tomselected", "ts-hidden-accessible");
       selectEl.removeAttribute("tabindex");
       selectEl.removeAttribute("style");
     });
   }
 
-  function updateRemoveButtons() {
-    const rows = rowsContainer.querySelectorAll(".manual-order-row");
-    rows.forEach((row, index) => {
-      const removeBtn = row.querySelector(".manual-order-remove");
-      if (!removeBtn) return;
-      const shouldDisable = rows.length === 1;
-      removeBtn.disabled = shouldDisable;
-      removeBtn.style.visibility = shouldDisable ? "hidden" : "visible";
-      removeBtn.dataset.rowIndex = String(index);
+  function getGroupBranchId(group) {
+    if (canSelectBranch) {
+      return group.querySelector(".manual-order-group-branch")?.value || "";
+    }
+    return group.querySelector(".manual-order-group-branch-hidden")?.value || "";
+  }
+
+  function syncGroupRows(group) {
+    const branchId = getGroupBranchId(group);
+    group.querySelectorAll(".manual-order-row-branch-id").forEach((input) => {
+      input.value = branchId;
     });
   }
 
-  function resolveBranchId(row, branchSelect) {
-    if (canSelectBranch) {
-      return branchSelect?.value || "";
-    }
-    const hiddenBranch = row.querySelector('input[name="branch_id[]"]');
-    return hiddenBranch?.value || "";
+  function buildRow(group) {
+    const row = document.createElement("div");
+    row.className = "manual-order-row";
+    row.style.cssText = "border:1px solid var(--gray-200);border-radius:12px;padding:12px;";
+    row.innerHTML = `
+      <div style="display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:end;">
+        <input type="hidden" name="branch_id[]" class="manual-order-row-branch-id" value="${getGroupBranchId(group)}">
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Product *</label>
+          <select name="product_id[]" class="form-input manual-order-product search-select" required>
+            <option value="">Select product to order</option>
+            {% for p in products %}
+            <option value="{{ p.id }}" data-pack-qty="{{ p.pack_quantity|default:1 }}" data-max-stock="{{ p.max_stock }}" data-max-packets="{{ p.max_packets_allowed }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Packets *</label>
+          <input type="number" name="packets[]" class="form-input manual-order-packets" required min="1" step="1" placeholder="e.g. 5">
+        </div>
+        <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
+          <button type="button" class="btn btn-outline manual-order-remove-row" style="white-space:nowrap;">Remove</button>
+        </div>
+      </div>
+      <div class="manual-order-helper text-xs text-muted" style="margin-top:6px;"></div>
+      <div class="manual-order-error text-xs text-danger" style="margin-top:4px;display:none;"></div>
+    `;
+    return row;
+  }
+
+  function addRow(group) {
+    const rowsContainer = group.querySelector(".manual-order-rows");
+    const row = buildRow(group);
+    rowsContainer.appendChild(row);
+    if (typeof initTomSelect === "function") initTomSelect(row);
+    updateGroupRemoveButtons();
+    validateRows();
+  }
+
+  function addGroup() {
+    const template = groupsContainer.querySelector(".manual-order-group");
+    if (!template) return;
+    const clone = template.cloneNode(true);
+    normalizeSearchSelects(clone);
+    clone.querySelectorAll("input, select, textarea").forEach((field) => {
+      if (field.matches(".manual-order-group-branch-hidden")) return;
+      if (field.tagName === "SELECT") {
+        field.selectedIndex = 0;
+      } else if (field.type !== "hidden") {
+        field.value = "";
+      }
+    });
+    const rowsContainer = clone.querySelector(".manual-order-rows");
+    rowsContainer.innerHTML = "";
+    addRow(clone);
+    groupsContainer.appendChild(clone);
+    if (typeof initTomSelect === "function") initTomSelect(clone);
+    updateGroupRemoveButtons();
+    syncGroupRows(clone);
+    validateRows();
+  }
+
+  function updateGroupRemoveButtons() {
+    const groups = groupsContainer.querySelectorAll(".manual-order-group");
+    groups.forEach((group) => {
+      const removeBtn = group.querySelector(".manual-order-remove-group");
+      if (!removeBtn) return;
+      const shouldShow = groups.length > 1;
+      removeBtn.style.display = shouldShow ? "" : "none";
+      removeBtn.disabled = !shouldShow;
+    });
   }
 
   function validateRows() {
-    const rows = rowsContainer.querySelectorAll(".manual-order-row");
+    const rows = groupsContainer.querySelectorAll(".manual-order-row");
     if (!submitButton || !rows.length) return;
 
     let allValid = true;
 
     rows.forEach((row) => {
+      const group = row.closest(".manual-order-group");
       const productSelect = row.querySelector(".manual-order-product");
-      const branchSelect = row.querySelector(".manual-order-branch");
       const packetsInput = row.querySelector(".manual-order-packets");
       const helper = row.querySelector(".manual-order-helper");
       const error = row.querySelector(".manual-order-error");
-
-      let rowValid = true;
-      let errorText = "";
-      let helperText = "";
-
+      const branchId = row.querySelector(".manual-order-row-branch-id")?.value || "";
+      const branchSelect = group?.querySelector(".manual-order-group-branch");
       const selectedOption = productSelect?.selectedOptions?.[0] || null;
       const productId = productSelect?.value || "";
-      const branchId = resolveBranchId(row, branchSelect);
       const branchCapacity = (capacityData[productId] && capacityData[productId][branchId]) ? capacityData[productId][branchId] : null;
-      // headroomPackets = remaining room to max stock (may be 0 when at/above max)
-      const headroomPackets = branchCapacity ? parseIntSafe(branchCapacity.max_packets) : null;
-      // absoluteMaxPackets = ceil(max_stock / pack_size) — the hard cap for manual orders
       const absoluteMaxPackets = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null;
       const packQty = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-pack-qty")) : null;
       const maxStock = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-stock")) : null;
@@ -201,12 +248,16 @@
       const currentUnits = branchCapacity ? parseIntSafe(branchCapacity.current_units) : null;
       const pendingUnits = branchCapacity ? parseIntSafe(branchCapacity.pending_units) : null;
 
-      if (!productSelect?.value) {
+      let rowValid = true;
+      let errorText = "";
+      let helperText = "Amount is in supplier packet sizes, not individual units.";
+
+      if (canSelectBranch && !branchSelect?.value) {
+        rowValid = false;
+        errorText = "Select a branch for this group.";
+      } else if (!productSelect?.value) {
         rowValid = false;
         errorText = "Select a product.";
-      } else if (canSelectBranch && !branchSelect?.value) {
-        rowValid = false;
-        errorText = "Select a branch.";
       } else if (!packetsInput?.value) {
         rowValid = false;
         errorText = "Enter packets to order.";
@@ -216,8 +267,6 @@
           rowValid = false;
           errorText = "Packets must be a positive whole number.";
         } else if (absoluteMaxPackets !== null && packets > absoluteMaxPackets) {
-          // Cap at absolute max (max_stock / pack_size), not at remaining headroom.
-          // This allows ordering even when current+pending stock already meets max.
           rowValid = false;
           errorText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
         }
@@ -227,12 +276,10 @@
         packetsInput.max = String(absoluteMaxPackets);
       }
 
-      if (headroomPackets !== null && packQty && maxStock && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
-        helperText = `Needed: ${headroomPackets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
+      if (branchCapacity && packQty && maxStock !== null && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
+        helperText = `Needed: ${branchCapacity.max_packets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
       } else if (absoluteMaxPackets !== null && packQty && maxStock) {
         helperText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
-      } else {
-        helperText = "Amount is in supplier packet sizes, not individual units.";
       }
 
       if (!rowValid) {
@@ -271,52 +318,60 @@
     unregisteredWrap.style.display = strategy === "unregistered" ? "" : "none";
   }
 
-  function cloneRow() {
-    if (!manualOrderRowTemplate) return;
-    const clone = manualOrderRowTemplate.cloneNode(true);
-    if (!clone) return;
-
-    normalizeSearchSelects(clone);
-
-    clone.querySelectorAll("input, select").forEach((field) => {
-      if (field.tagName === "SELECT") {
-        field.selectedIndex = 0;
-      } else if (field.type === "hidden") {
-        return;
-      } else {
-        field.value = "";
-      }
-    });
-
-    const error = clone.querySelector(".manual-order-error");
-    if (error) {
-      error.textContent = "";
-      error.style.display = "none";
-    }
-
-    const helper = clone.querySelector(".manual-order-helper");
-    if (helper) {
-      helper.textContent = "";
-    }
-
-    rowsContainer.appendChild(clone);
-    if (typeof initTomSelect === "function") initTomSelect(clone);
-    updateRemoveButtons();
-    validateRows();
+  function refreshBranchIds() {
+    groupsContainer.querySelectorAll(".manual-order-group").forEach((group) => syncGroupRows(group));
   }
 
-  addButton?.addEventListener("click", cloneRow);
+  if (canSelectBranch) {
+    groupsContainer.querySelectorAll(".manual-order-group-branch").forEach((selectEl) => {
+      selectEl.addEventListener("change", () => {
+        syncGroupRows(selectEl.closest(".manual-order-group"));
+        validateRows();
+      });
+    });
+  }
 
-  form.addEventListener("click", (event) => {
-    const removeButton = event.target.closest(".manual-order-remove");
-    if (!removeButton) return;
-    const row = removeButton.closest(".manual-order-row");
-    if (!row) return;
-    const rowCount = rowsContainer.querySelectorAll(".manual-order-row").length;
-    if (rowCount <= 1) return;
-    row.remove();
-    updateRemoveButtons();
-    validateRows();
+  groupsContainer.querySelectorAll(".manual-order-group").forEach((group) => {
+    if (group.querySelectorAll(".manual-order-row").length === 0) {
+      addRow(group);
+    }
+    syncGroupRows(group);
+  });
+
+  groupsContainer.addEventListener("click", (event) => {
+    const addRowButton = event.target.closest(".manual-order-add-row");
+    if (addRowButton) {
+      const group = addRowButton.closest(".manual-order-group");
+      if (group) addRow(group);
+      return;
+    }
+
+    const removeRowButton = event.target.closest(".manual-order-remove-row");
+    if (removeRowButton) {
+      const row = removeRowButton.closest(".manual-order-row");
+      const group = removeRowButton.closest(".manual-order-group");
+      if (!row || !group) return;
+      const rowCount = group.querySelectorAll(".manual-order-row").length;
+      if (rowCount <= 1) return;
+      row.remove();
+      updateGroupRemoveButtons();
+      validateRows();
+      return;
+    }
+
+    const removeGroupButton = event.target.closest(".manual-order-remove-group");
+    if (removeGroupButton) {
+      const group = removeGroupButton.closest(".manual-order-group");
+      const groupCount = groupsContainer.querySelectorAll(".manual-order-group").length;
+      if (!group || groupCount <= 1) return;
+      group.remove();
+      updateGroupRemoveButtons();
+      validateRows();
+    }
+  });
+
+  addGroupButton?.addEventListener("click", () => {
+    addGroup();
   });
 
   form.addEventListener("input", validateRows);
@@ -327,8 +382,9 @@
     }
   });
 
-  if (typeof initTomSelect === "function") initTomSelect(rowsContainer);
-  updateRemoveButtons();
+  if (typeof initTomSelect === "function") initTomSelect(groupsContainer);
+  updateGroupRemoveButtons();
+  refreshBranchIds();
   validateRows();
   updateSupplierStrategyUI();
 })();
