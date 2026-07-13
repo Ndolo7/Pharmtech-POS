@@ -22,6 +22,7 @@ class Category(models.Model):
 
 class Supplier(models.Model):
     name = models.CharField(max_length=200)
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='suppliers')
     contact_person = models.CharField(max_length=100)
     phone_number = models.CharField(max_length=15)
     email = models.EmailField()
@@ -60,6 +61,18 @@ class AutoReorderRequest(models.Model):
     ORIGIN_AUTO = "auto"
     ORIGIN_MANUAL = "manual"
 
+    APPROVAL_NOT_REQUIRED = "not_required"
+    APPROVAL_PENDING = "pending"
+    APPROVAL_APPROVED = "approved"
+    APPROVAL_REJECTED = "rejected"
+
+    APPROVAL_CHOICES = [
+        (APPROVAL_NOT_REQUIRED, "Not Required"),
+        (APPROVAL_PENDING, "Pending"),
+        (APPROVAL_APPROVED, "Approved"),
+        (APPROVAL_REJECTED, "Rejected"),
+    ]
+
     ORIGIN_CHOICES = [
         (ORIGIN_AUTO, "Automatic"),
         (ORIGIN_MANUAL, "Manual"),
@@ -83,6 +96,11 @@ class AutoReorderRequest(models.Model):
     requested_quantity = models.PositiveIntegerField()
     remaining_quantity = models.PositiveIntegerField()
     origin = models.CharField(max_length=12, choices=ORIGIN_CHOICES, default=ORIGIN_AUTO)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_auto_reorders")
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_CHOICES, default=APPROVAL_NOT_REQUIRED)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_auto_reorders")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_notes = models.TextField(blank=True)
     preferred_supplier_ids = models.JSONField(default=list, blank=True)
     unregistered_supplier_name = models.CharField(max_length=200, blank=True)
     branch_requirements = models.JSONField(default=dict, blank=True)
@@ -235,6 +253,43 @@ class PurchaseItem(models.Model):
     def save(self, *args, **kwargs):
         self.total_cost = self.quantity * self.unit_cost
         super().save(*args, **kwargs)
+
+
+class BranchSupplyRequest(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="branch_supply_requests")
+    source_branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE, related_name="supply_requests_out")
+    destination_branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE, related_name="supply_requests_in")
+    requested_quantity = models.PositiveIntegerField()
+    fulfilled_quantity = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    transfer = models.OneToOneField("Transfer", on_delete=models.SET_NULL, null=True, blank=True, related_name="branch_supply_request")
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_branch_supply_requests")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_branch_supply_requests")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Branch supply request #{self.pk} {self.product.name}"
 
 
 class Transfer(models.Model):
