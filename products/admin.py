@@ -5,6 +5,7 @@ from django.urls import reverse
 from .models import (
     AutoOrderScheduleSetting,
     AutoReorderRequest,
+    BranchSupplyRequest,
     Category,
     Product,
     Purchase,
@@ -28,8 +29,9 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
-    list_display = ("name", "contact_person", "phone_number", "email", "created_at")
-    search_fields = ("name", "contact_person", "phone_number", "email")
+    list_display = ("name", "branch", "contact_person", "phone_number", "email", "created_at")
+    list_filter = ("branch", "created_at")
+    search_fields = ("name", "contact_person", "phone_number", "email", "branch__name")
     ordering = ("name",)
 
 
@@ -83,6 +85,7 @@ class AutoReorderRequestAdmin(admin.ModelAdmin):
         "id",
         "product",
         "origin",
+        "approval_status",
         "requested_quantity",
         "remaining_quantity",
         "target_stock_level",
@@ -90,8 +93,8 @@ class AutoReorderRequestAdmin(admin.ModelAdmin):
         "created_at",
         "completed_at",
     )
-    list_filter = ("origin", "status", "created_at")
-    search_fields = ("product__name", "product__barcode")
+    list_filter = ("origin", "approval_status", "status", "created_at")
+    search_fields = ("product__name", "product__barcode", "created_by__username")
     ordering = ("-created_at",)
 
 
@@ -110,6 +113,23 @@ class SupplierReorderRequestAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "priority", "created_at")
     search_fields = ("supplier__name", "reorder_request__product__name")
+    ordering = ("-created_at",)
+
+
+@admin.register(BranchSupplyRequest)
+class BranchSupplyRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "product",
+        "source_branch",
+        "destination_branch",
+        "requested_quantity",
+        "fulfilled_quantity",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status", "source_branch", "destination_branch", "created_at")
+    search_fields = ("product__name", "source_branch__name", "destination_branch__name")
     ordering = ("-created_at",)
 
 

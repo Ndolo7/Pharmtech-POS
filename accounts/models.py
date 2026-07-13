@@ -42,6 +42,12 @@ class User(AbstractUser):
     def can_adjust_stock(self):
         return self.is_superuser or self.role == 'super_admin'
 
+    def can_create_manual_orders(self):
+        return self.is_superuser or self.role in {'super_admin', 'pharmtec'}
+
+    def can_approve_manual_orders(self):
+        return self.is_superuser or self.role == 'super_admin'
+
     def can_manage_users(self):
         return self.is_superuser or self.role == 'super_admin'
 

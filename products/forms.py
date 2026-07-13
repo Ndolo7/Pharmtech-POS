@@ -46,14 +46,21 @@ class CategoryForm(forms.ModelForm):
 class SupplierForm(forms.ModelForm):
     class Meta:
         model = Supplier
-        fields = ("name", "contact_person", "phone_number", "email", "address")
+        fields = ("name", "branch", "contact_person", "phone_number", "email", "address")
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-input"}),
+            "branch": forms.Select(attrs={"class": "form-input search-select"}),
             "contact_person": forms.TextInput(attrs={"class": "form-input"}),
             "phone_number": forms.TextInput(attrs={"class": "form-input", "placeholder": "07XXXXXXXX or 2547XXXXXXXX"}),
             "email": forms.EmailInput(attrs={"class": "form-input", "required": True}),
             "address": forms.Textarea(attrs={"class": "form-textarea", "rows": 2}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["branch"].queryset = Branch.objects.filter(is_active=True).order_by("name")
+        self.fields["branch"].required = False
+        self.fields["branch"].empty_label = "Global supplier"
 
     def clean_phone_number(self):
         raw_phone = self.cleaned_data.get("phone_number")
