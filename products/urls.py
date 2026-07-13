@@ -33,4 +33,7 @@ urlpatterns = [
     ),
     path("supplier-pending-orders/", views.supplier_pending_orders_view, name="supplier-pending-orders"),
     path("order/create/", views.manual_order_create_view, name="create-order"),
+    path("order/approvals/", views.manual_order_approval_list_view, name="order-approvals"),
+    path("order/approvals/manual/<int:pk>/", views.manual_order_approval_action_view, name="manual-order-approval-action"),
+    path("order/approvals/branch/<int:pk>/", views.branch_supply_request_action_view, name="branch-supply-request-action"),
 ]
