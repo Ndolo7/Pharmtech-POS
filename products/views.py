@@ -18,7 +18,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from branches.models import Branch
 from .forms import (
@@ -32,6 +32,7 @@ from .forms import (
 )
 from .models import (
     AutoReorderRequest,
+    BranchSupplyRequest,
     Category,
     Supplier,
     SupplierReorderRequest,
@@ -202,6 +203,127 @@ def _pending_packets_by_product_branch(product_ids):
     return totals
 
 
+def _manual_order_requires_approval(user):
+    return getattr(user, "role", "") == "pharmtec" and not user.is_superuser
+
+
+def _manual_order_can_select_branch(user):
+    return user.is_superuser or getattr(user, "role", "") == "super_admin"
+
+
+def _branch_ids_for_reorder(branch_requirements):
+    branch_names = [
+        str(branch_name)
+        for branch_name, qty in (branch_requirements or {}).items()
+        if _to_non_negative_int(qty) > 0
+    ]
+    if not branch_names:
+        return set()
+    return set(Branch.objects.filter(is_active=True, name__in=branch_names).values_list("id", flat=True))
+
+
+def _manual_order_supplier_queryset(reorder):
+    supplier_qs = Supplier.objects.all()
+    branch_ids = _branch_ids_for_reorder(reorder.branch_requirements)
+    if branch_ids:
+        supplier_qs = supplier_qs.filter(Q(branch__isnull=True) | Q(branch_id__in=branch_ids))
+    if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.preferred_supplier_ids:
+        supplier_qs = supplier_qs.filter(id__in=reorder.preferred_supplier_ids)
+    return supplier_qs
+
+
+def _approve_branch_supply_request(request, branch_supply_request):
+    now = timezone.now()
+    with transaction.atomic():
+        locked_request = (
+            BranchSupplyRequest.objects.select_for_update()
+            .select_related("product", "source_branch", "destination_branch")
+            .filter(pk=branch_supply_request.pk)
+            .first()
+        )
+        if not locked_request or locked_request.status != BranchSupplyRequest.STATUS_PENDING:
+            return False, "This branch supply request has already been processed."
+
+        source_stock, _ = Stock.objects.get_or_create(
+            product=locked_request.product,
+            branch=locked_request.source_branch,
+            defaults={"quantity": 0},
+        )
+        destination_stock, _ = Stock.objects.get_or_create(
+            product=locked_request.product,
+            branch=locked_request.destination_branch,
+            defaults={"quantity": 0},
+        )
+
+        transfer_qty = min(int(locked_request.requested_quantity or 0), max(int(source_stock.quantity or 0), 0))
+        if transfer_qty <= 0:
+            locked_request.status = BranchSupplyRequest.STATUS_REJECTED
+            locked_request.responded_at = now
+            locked_request.save(update_fields=["status", "responded_at", "updated_at"])
+            return False, "The source branch does not currently have enough stock to approve this request."
+
+        transfer = Transfer.objects.create(
+            from_branch=locked_request.source_branch,
+            to_branch=locked_request.destination_branch,
+            created_by=request.user,
+            notes=locked_request.notes,
+        )
+        TransferItem.objects.create(
+            transfer=transfer,
+            product=locked_request.product,
+            quantity=transfer_qty,
+        )
+
+        source_stock.quantity -= transfer_qty
+        destination_stock.quantity += transfer_qty
+        source_stock.save(update_fields=["quantity", "updated_at"])
+        destination_stock.save(update_fields=["quantity", "updated_at"])
+
+        StockMovement.objects.create(
+            product=locked_request.product,
+            branch=locked_request.source_branch,
+            movement_type="transfer_out",
+            quantity=-transfer_qty,
+            reference=f"TRF-{transfer.id}",
+            notes=locked_request.notes,
+            created_by=request.user,
+        )
+        StockMovement.objects.create(
+            product=locked_request.product,
+            branch=locked_request.destination_branch,
+            movement_type="transfer_in",
+            quantity=transfer_qty,
+            reference=f"TRF-{transfer.id}",
+            notes=locked_request.notes,
+            created_by=request.user,
+        )
+
+        locked_request.transfer = transfer
+        locked_request.fulfilled_quantity = transfer_qty
+        locked_request.status = BranchSupplyRequest.STATUS_COMPLETED
+        locked_request.approved_by = request.user
+        locked_request.approved_at = now
+        locked_request.responded_at = now
+        locked_request.save(
+            update_fields=[
+                "transfer",
+                "fulfilled_quantity",
+                "status",
+                "approved_by",
+                "approved_at",
+                "responded_at",
+                "updated_at",
+            ]
+        )
+
+        product = locked_request.product
+        if not product.exempt_from_auto_reorder:
+            product.exempt_from_auto_reorder = True
+            product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+
+    return True, f"Branch supply approved and stock transferred from {branch_supply_request.source_branch.name}."
+
+
 @login_required
 @require_GET
 def supplier_pending_orders_view(request):
@@ -238,11 +360,11 @@ def supplier_pending_orders_view(request):
 
 @login_required
 def manual_order_create_view(request):
-    if not _can_manage_catalog(request.user):
+    if not request.user.can_create_manual_orders():
         return HttpResponseForbidden("Permission denied.")
 
     Branch = apps.get_model("branches", "Branch")
-    can_select_branch = request.user.can_manage_users()
+    can_select_branch = _manual_order_can_select_branch(request.user)
     all_branches = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else None
     
     active_branch_id = request.GET.get("branch") or request.POST.get("branch_id")
@@ -257,6 +379,7 @@ def manual_order_create_view(request):
         selected_supplier_ids_raw = request.POST.getlist("supplier_id[]")
         unregistered_supplier_name = (request.POST.get("unregistered_supplier_name") or "").strip()
         preferred_supplier_ids = []
+        requires_admin_approval = _manual_order_requires_approval(request.user)
 
         if supplier_strategy not in {"cascade", "selected", "unregistered"}:
             return HttpResponseBadRequest("Invalid supplier strategy selected.")
@@ -353,63 +476,119 @@ def manual_order_create_view(request):
 
         pending_packets_map = _pending_packets_by_product_branch({line[0] for line in parsed_lines})
         grouped_lines = defaultdict(int)
+        product_branch_requirements = defaultdict(lambda: defaultdict(int))
+        product_packet_totals = defaultdict(int)
         for product_id, branch_id, packets in parsed_lines:
             grouped_lines[(product_id, branch_id)] += packets
+            product_packet_totals[product_id] += packets
+            branch = branch_map[branch_id]
+            product_branch_requirements[product_id][branch.name] += packets
 
-        # Validate each line against the absolute max packets (max_stock / pack_size).
-        # Unlike the headroom cap (which is 0 when stock already meets max), this
-        # allows manual orders even when current+pending stock already meets max stock,
-        # as long as the order size itself doesn't exceed the product's packet capacity.
+        # Validate each line against the branch headroom and absolute packet cap.
         for (product_id, branch_id), requested_packets in grouped_lines.items():
             product = product_map[product_id]
+            branch = branch_map[branch_id]
             pack_quantity = max(int(product.pack_quantity or 1), 1)
             max_stock_units = max(int(product.max_stock or 1), 1)
             absolute_max_packets = max_stock_units // pack_quantity
+            current_branch_units = max(int(product.current_stock(branch) or 0), 0)
+            pending_branch_units = pending_packets_map.get((product_id, branch.name), 0) * pack_quantity
+            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
+            requested_units = requested_packets * pack_quantity
 
             if requested_packets > absolute_max_packets:
                 return HttpResponseBadRequest(
                     f"{product.name} can only be ordered in up to {absolute_max_packets} packet(s) "
                     f"(max stock: {max_stock_units} units, pack size: {pack_quantity} units/packet)."
                 )
+            if requested_units > available_units:
+                return HttpResponseBadRequest(
+                    f"{product.name} can only accept up to {available_units // pack_quantity} packet(s) for {branch.name}."
+                )
 
         reorder_ids = set()
         unregistered_supplier = _get_or_create_unregistered_supplier(unregistered_supplier_name) if supplier_strategy == "unregistered" else None
 
         with transaction.atomic():
-            for (product_id, branch_id), packets in grouped_lines.items():
+            for product_id, packets in product_packet_totals.items():
                 product = product_map[product_id]
-                branch = branch_map[branch_id]
-
-                reorder = AutoReorderRequest.objects.create(
-                    product=product,
-                    target_stock_level=max(int(product.max_stock or 1), 1),
-                    current_stock_snapshot=product.current_stock(),
-                    requested_quantity=packets,
-                    remaining_quantity=packets,
-                    origin=AutoReorderRequest.ORIGIN_MANUAL,
-                    preferred_supplier_ids=preferred_supplier_ids,
-                    unregistered_supplier_name=unregistered_supplier_name if supplier_strategy == "unregistered" else "",
-                    branch_requirements={branch.name: packets},
-                    status=AutoReorderRequest.STATUS_OPEN,
+                branch_requirements = dict(product_branch_requirements[product_id])
+                current_stock = product.current_stock()
+                existing = (
+                    AutoReorderRequest.objects.select_for_update()
+                    .filter(product=product, origin=AutoReorderRequest.ORIGIN_MANUAL, status=AutoReorderRequest.STATUS_OPEN)
+                    .order_by("-created_at")
+                    .first()
                 )
-                if supplier_strategy == "unregistered" and unregistered_supplier:
-                    now = timezone.now()
-                    SupplierReorderRequest.objects.create(
-                        reorder_request=reorder,
-                        supplier=unregistered_supplier,
-                        priority=unregistered_supplier.priority or 9999,
-                        requested_quantity=packets,
-                        fulfilled_quantity=packets,
-                        status=SupplierReorderRequest.STATUS_ACCEPTED,
-                        expires_at=now + timedelta(seconds=3600),
-                        responded_at=now,
-                        emailed_at=now,
+
+                if existing:
+                    existing_branch_requirements = existing.branch_requirements or {}
+                    if not isinstance(existing_branch_requirements, dict):
+                        existing_branch_requirements = {}
+                    merged_branch_requirements = dict(existing_branch_requirements)
+                    for branch_name, branch_packets in branch_requirements.items():
+                        merged_branch_requirements[branch_name] = _to_non_negative_int(merged_branch_requirements.get(branch_name, 0)) + _to_non_negative_int(branch_packets)
+
+                    existing.requested_quantity = _to_non_negative_int(existing.requested_quantity) + packets
+                    existing.remaining_quantity = _to_non_negative_int(existing.remaining_quantity) + packets
+                    existing.current_stock_snapshot = current_stock
+                    existing.target_stock_level = max(int(product.max_stock or 1), 1)
+                    existing.branch_requirements = merged_branch_requirements
+                    existing.created_by = existing.created_by or request.user
+                    if requires_admin_approval:
+                        existing.approval_status = AutoReorderRequest.APPROVAL_PENDING
+                    elif existing.approval_status not in {AutoReorderRequest.APPROVAL_PENDING, AutoReorderRequest.APPROVAL_REJECTED}:
+                        existing.approval_status = AutoReorderRequest.APPROVAL_NOT_REQUIRED
+                    existing.save(
+                        update_fields=[
+                            "requested_quantity",
+                            "remaining_quantity",
+                            "current_stock_snapshot",
+                            "target_stock_level",
+                            "branch_requirements",
+                            "created_by",
+                            "approval_status",
+                            "updated_at",
+                        ]
                     )
+                    reorder = existing
+                else:
+                    reorder = AutoReorderRequest.objects.create(
+                        product=product,
+                        target_stock_level=max(int(product.max_stock or 1), 1),
+                        current_stock_snapshot=current_stock,
+                        requested_quantity=packets,
+                        remaining_quantity=packets,
+                        origin=AutoReorderRequest.ORIGIN_MANUAL,
+                        created_by=request.user,
+                        approval_status=(
+                            AutoReorderRequest.APPROVAL_PENDING if requires_admin_approval else AutoReorderRequest.APPROVAL_NOT_REQUIRED
+                        ),
+                        preferred_supplier_ids=preferred_supplier_ids,
+                        unregistered_supplier_name=unregistered_supplier_name if supplier_strategy == "unregistered" else "",
+                        branch_requirements=branch_requirements,
+                        status=AutoReorderRequest.STATUS_OPEN,
+                    )
+
+                if not requires_admin_approval and supplier_strategy == "unregistered" and unregistered_supplier:
+                    now = timezone.now()
+                    if not reorder.supplier_requests.filter(supplier=unregistered_supplier).exists():
+                        SupplierReorderRequest.objects.create(
+                            reorder_request=reorder,
+                            supplier=unregistered_supplier,
+                            priority=unregistered_supplier.priority or 9999,
+                            requested_quantity=reorder.remaining_quantity,
+                            fulfilled_quantity=reorder.remaining_quantity,
+                            status=SupplierReorderRequest.STATUS_ACCEPTED,
+                            expires_at=now + timedelta(seconds=3600),
+                            responded_at=now,
+                            emailed_at=now,
+                        )
                     reorder.remaining_quantity = 0
                     reorder.status = AutoReorderRequest.STATUS_FULFILLED
                     reorder.completed_at = now
                     reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
-                else:
+                elif not requires_admin_approval:
                     reorder_ids.add(reorder.id)
 
         for reorder_id in sorted(reorder_ids):
@@ -422,14 +601,17 @@ def manual_order_create_view(request):
                 "stock-action-success",
                 {
                     "message": (
-                        f"Manual order created. "
-                        "Supplier notifications sent."
+                        "Manual order created and queued for supplier notifications."
+                        if not requires_admin_approval
+                        else "Manual order created and sent for admin approval."
                     )
                 },
             )
         messages.success(
             request,
-            f"Manual order created. Supplier notifications were queued.",
+            "Manual order created and queued for supplier notifications."
+            if not requires_admin_approval
+            else "Manual order created and is waiting for admin approval.",
         )
         return HttpResponse("")
 
@@ -473,6 +655,106 @@ def manual_order_create_view(request):
         "can_select_branch": can_select_branch,
         "manual_order_capacity_json": json.dumps(capacity_by_product_branch),
     })
+
+
+@login_required
+def manual_order_approval_list_view(request):
+    if not request.user.can_approve_manual_orders():
+        return HttpResponseForbidden("Permission denied.")
+
+    pending_manual_orders = (
+        AutoReorderRequest.objects.filter(
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+        )
+        .select_related("product", "created_by", "approved_by")
+        .order_by("-created_at")
+    )
+    pending_branch_supply_requests = (
+        BranchSupplyRequest.objects.filter(status=BranchSupplyRequest.STATUS_PENDING)
+        .select_related("product", "source_branch", "destination_branch", "created_by")
+        .order_by("-created_at")
+    )
+
+    return render(
+        request,
+        "products/order_approvals.html",
+        {
+            "pending_manual_orders": pending_manual_orders,
+            "pending_branch_supply_requests": pending_branch_supply_requests,
+        },
+    )
+
+
+@login_required
+@require_POST
+def manual_order_approval_action_view(request, pk):
+    if not request.user.can_approve_manual_orders():
+        return HttpResponseForbidden("Permission denied.")
+
+    order = get_object_or_404(
+        AutoReorderRequest.objects.select_related("product", "created_by"),
+        pk=pk,
+        origin=AutoReorderRequest.ORIGIN_MANUAL,
+    )
+    if order.approval_status != AutoReorderRequest.APPROVAL_PENDING:
+        messages.info(request, "That manual order has already been processed.")
+        return redirect("order-approvals")
+
+    action = (request.POST.get("action") or "").strip().lower()
+    now = timezone.now()
+    if action == "approve":
+        order.approval_status = AutoReorderRequest.APPROVAL_APPROVED
+        order.approved_by = request.user
+        order.approved_at = now
+        order.save(update_fields=["approval_status", "approved_by", "approved_at", "updated_at"])
+        notify_next_supplier.delay(order.id)
+        messages.success(request, f"Manual order for {order.product.name} approved.")
+    elif action == "reject":
+        order.approval_status = AutoReorderRequest.APPROVAL_REJECTED
+        order.status = AutoReorderRequest.STATUS_CANCELLED
+        order.completed_at = now
+        order.approved_by = request.user
+        order.approved_at = now
+        order.save(update_fields=["approval_status", "status", "completed_at", "approved_by", "approved_at", "updated_at"])
+        messages.success(request, f"Manual order for {order.product.name} rejected.")
+    else:
+        messages.error(request, "Invalid approval action.")
+    return redirect("order-approvals")
+
+
+@login_required
+@require_POST
+def branch_supply_request_action_view(request, pk):
+    if not request.user.can_approve_manual_orders():
+        return HttpResponseForbidden("Permission denied.")
+
+    branch_request = get_object_or_404(
+        BranchSupplyRequest.objects.select_related("product", "source_branch", "destination_branch"),
+        pk=pk,
+    )
+    if branch_request.status != BranchSupplyRequest.STATUS_PENDING:
+        messages.info(request, "That branch supply request has already been processed.")
+        return redirect("order-approvals")
+
+    action = (request.POST.get("action") or "").strip().lower()
+    if action == "approve":
+        ok, message = _approve_branch_supply_request(request, branch_request)
+        if ok:
+            messages.success(request, message)
+        else:
+            messages.error(request, message)
+    elif action == "reject":
+        now = timezone.now()
+        branch_request.status = BranchSupplyRequest.STATUS_REJECTED
+        branch_request.approved_by = request.user
+        branch_request.approved_at = now
+        branch_request.responded_at = now
+        branch_request.save(update_fields=["status", "approved_by", "approved_at", "responded_at", "updated_at"])
+        messages.success(request, f"Branch supply request for {branch_request.product.name} rejected.")
+    else:
+        messages.error(request, "Invalid approval action.")
+    return redirect("order-approvals")
 
 
 def _can_manage_catalog(user):
