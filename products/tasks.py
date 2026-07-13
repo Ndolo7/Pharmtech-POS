@@ -13,11 +13,12 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import EmailMessage, send_mail
 from django.db import transaction
+from django.db.models import Max, Q
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, ImageDraw
 
-from .models import AutoReorderRequest, Product, Purchase, Supplier, SupplierReorderRequest
+from .models import AutoReorderRequest, BranchSupplyRequest, Product, Purchase, Supplier, SupplierReorderRequest
 from .sms import normalize_phone_numbers, send_sms_via_leopard
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,89 @@ def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
     )
 
 
+def _branch_last_sale_dates(product_id: int) -> dict[int, timezone.datetime]:
+    from sales.models import SaleItem
+
+    sale_rows = (
+        SaleItem.objects.filter(product_id=product_id, sale__branch__is_active=True)
+        .values("sale__branch_id")
+        .annotate(last_sale=Max("sale__created_at"))
+    )
+    return {
+        int(row["sale__branch_id"]): row["last_sale"]
+        for row in sale_rows
+        if row.get("sale__branch_id") and row.get("last_sale")
+    }
+
+
+def _supplier_branch_ids_for_reorder(reorder: AutoReorderRequest) -> set[int]:
+    branch_names = [
+        str(branch_name)
+        for branch_name, qty in (reorder.branch_requirements or {}).items()
+        if max(int(qty or 0), 0) > 0
+    ]
+    if not branch_names:
+        return set()
+    return set(Branch.objects.filter(is_active=True, name__in=branch_names).values_list("id", flat=True))
+
+
+def _pick_stale_supply_branch(product: Product, demand_branch: Branch, active_branches: list[Branch], stock_by_branch_id: dict[int, int], now_local) -> Branch | None:
+    last_sale_dates = _branch_last_sale_dates(product.id)
+    stale_candidates = []
+    for branch in active_branches:
+        if branch.id == demand_branch.id:
+            continue
+        stock_qty = max(int(stock_by_branch_id.get(branch.id, 0) or 0), 0)
+        if stock_qty <= 0:
+            continue
+        last_sale = last_sale_dates.get(branch.id)
+        if last_sale is None:
+            continue
+        last_sale_local_date = timezone.localtime(last_sale, now_local.tzinfo).date()
+        days_since_sale = (now_local.date() - last_sale_local_date).days
+        if days_since_sale < 75:
+            continue
+        stale_candidates.append((days_since_sale, stock_qty, branch))
+
+    if not stale_candidates:
+        return None
+
+    stale_candidates.sort(key=lambda item: (item[0], item[1], item[2].name.lower()), reverse=True)
+    return stale_candidates[0][2]
+
+
+def _upsert_branch_supply_request(product: Product, source_branch: Branch, destination_branch: Branch, requested_quantity: int, now, created_by=None):
+    request = (
+        BranchSupplyRequest.objects.select_for_update()
+        .filter(
+            product=product,
+            source_branch=source_branch,
+            destination_branch=destination_branch,
+            status=BranchSupplyRequest.STATUS_PENDING,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if request:
+        if requested_quantity > request.requested_quantity:
+            request.requested_quantity = requested_quantity
+            request.save(update_fields=["requested_quantity", "updated_at"])
+        return request, False
+
+    request = BranchSupplyRequest.objects.create(
+        product=product,
+        source_branch=source_branch,
+        destination_branch=destination_branch,
+        requested_quantity=requested_quantity,
+        created_by=created_by,
+        status=BranchSupplyRequest.STATUS_PENDING,
+        notes=(
+            f"Auto-created because {product.name} has been idle at {source_branch.name} for at least 75 days."
+        ),
+    )
+    return request, True
+
+
 def _send_supplier_reorder_sms_once(supplier_request: SupplierReorderRequest, message: str | None = None) -> dict:
     sms_body = message or _supplier_reorder_message_text(
         supplier_request,
@@ -432,6 +516,7 @@ def scan_low_stock_and_trigger_reorders():
     created_count = 0
     resumed_count = 0
     cancelled_unsold_count = 0
+    internal_supply_created = 0
     active_branches = list(Branch.objects.filter(is_active=True).order_by("id"))
     active_branch_by_id = {branch.id: branch for branch in active_branches}
     sold_branches_by_product = defaultdict(set)
@@ -480,33 +565,45 @@ def scan_low_stock_and_trigger_reorders():
         if not sold_branch_ids:
             continue
 
-        total_packets = 0
-        branch_requirements = {}
+        supplier_branch_requirements = {}
         stock_by_branch_id = {
             stock.branch_id: int(stock.quantity or 0)
             for stock in product.stock_set.filter(branch__is_active=True).only("branch_id", "quantity")
         }
+        last_sale_dates = _branch_last_sale_dates(product.id)
+        internal_supply_created_for_branches = set()
 
         for branch_id in sorted(sold_branch_ids):
             branch = active_branch_by_id.get(branch_id)
             if not branch:
                 continue
             branch_stock = stock_by_branch_id.get(branch_id, 0)
-            if branch_stock <= reorder_level:
-                target_units = _auto_reorder_target_units(
-                    max_stock_units=max_stock,
-                    current_stock_units=branch_stock,
-                    pack_quantity=pack_quantity,
-                )
-                packets = _packets_needed(target_units, pack_quantity)
-                if packets > 0:
-                    total_packets += packets
-                    branch_requirements[branch.name] = packets
+            if branch_stock > reorder_level:
+                continue
 
-        if total_packets <= 0:
+            target_units = _auto_reorder_target_units(
+                max_stock_units=max_stock,
+                current_stock_units=branch_stock,
+                pack_quantity=pack_quantity,
+            )
+            packets = _packets_needed(target_units, pack_quantity)
+            if packets <= 0:
+                continue
+
+            supply_branch = _pick_stale_supply_branch(product, branch, active_branches, stock_by_branch_id, now_local)
+            if supply_branch:
+                with transaction.atomic():
+                    _upsert_branch_supply_request(product, supply_branch, branch, packets, now)
+                internal_supply_created += 1
+                internal_supply_created_for_branches.add(branch.name)
+                continue
+
+            supplier_branch_requirements[branch.name] = packets
+
+        if not supplier_branch_requirements:
             continue
 
-        required_quantity = total_packets
+        required_quantity = sum(supplier_branch_requirements.values())
         current_stock = product.current_stock()
 
         reorder_id = None
@@ -538,8 +635,8 @@ def scan_low_stock_and_trigger_reorders():
                 if existing.current_stock_snapshot != current_stock:
                     existing.current_stock_snapshot = current_stock
                     fields_to_update.append("current_stock_snapshot")
-                if existing.branch_requirements != branch_requirements:
-                    existing.branch_requirements = branch_requirements
+                if existing.branch_requirements != supplier_branch_requirements:
+                    existing.branch_requirements = supplier_branch_requirements
                     fields_to_update.append("branch_requirements")
                 if required_quantity > existing.requested_quantity:
                     existing.requested_quantity = required_quantity
@@ -562,7 +659,7 @@ def scan_low_stock_and_trigger_reorders():
                     requested_quantity=required_quantity,
                     remaining_quantity=required_quantity,
                     origin=AutoReorderRequest.ORIGIN_AUTO,
-                    branch_requirements=branch_requirements,
+                    branch_requirements=supplier_branch_requirements,
                     status=AutoReorderRequest.STATUS_OPEN,
                 )
                 reorder_id = reorder.id
@@ -571,7 +668,12 @@ def scan_low_stock_and_trigger_reorders():
         if reorder_id:
             notify_next_supplier.delay(reorder_id)
 
-    return {"created": created_count, "resumed": resumed_count, "cancelled_unsold": cancelled_unsold_count}
+    return {
+        "created": created_count,
+        "resumed": resumed_count,
+        "cancelled_unsold": cancelled_unsold_count,
+        "branch_supply_requests": internal_supply_created,
+    }
 
 
 @shared_task
@@ -590,6 +692,9 @@ def notify_next_supplier(reorder_request_id: int):
 
         if reorder.status != AutoReorderRequest.STATUS_OPEN:
             return {"status": "inactive", "reorder_status": reorder.status}
+
+        if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.approval_status == AutoReorderRequest.APPROVAL_PENDING:
+            return {"status": "awaiting_approval", "reorder_status": reorder.status}
 
         if reorder.remaining_quantity <= 0:
             reorder.status = AutoReorderRequest.STATUS_FULFILLED
@@ -649,6 +754,9 @@ def notify_next_supplier(reorder_request_id: int):
 
         attempted_supplier_ids = reorder.supplier_requests.values_list("supplier_id", flat=True)
         supplier_candidates = Supplier.objects.all()
+        reorder_branch_ids = _supplier_branch_ids_for_reorder(reorder)
+        if reorder_branch_ids:
+            supplier_candidates = supplier_candidates.filter(Q(branch__isnull=True) | Q(branch_id__in=reorder_branch_ids))
         if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.preferred_supplier_ids:
             supplier_candidates = supplier_candidates.filter(id__in=reorder.preferred_supplier_ids)
 
