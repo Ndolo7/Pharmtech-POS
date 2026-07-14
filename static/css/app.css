@@ -690,6 +690,35 @@ tbody tr:last-child td { border-bottom: none; }
   .adjust-stock-modal .modal-footer .btn {
     width: 100%;
   }
+  .manual-order-group {
+    padding: 12px 10px !important;
+  }
+  .manual-order-group > div:first-child {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .manual-order-group .manual-order-rows {
+    gap: 12px;
+  }
+  .manual-order-row > div:first-child {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .manual-order-row .form-group {
+    margin-bottom: 10px;
+  }
+  .manual-order-group .manual-order-add-row,
+  .manual-order-group .manual-order-remove-group,
+  .manual-order-row .manual-order-remove-row,
+  #manual-order-add-group,
+  .manual-order-footer .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+  .manual-order-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
   .dashboard-actions-grid { grid-template-columns: 1fr; }
   .dashboard-shift-grid { grid-template-columns: 1fr; gap: 12px; }
   .dashboard-home .dashboard-stat-card .value { font-size: 22px; }

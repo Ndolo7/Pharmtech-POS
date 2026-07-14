@@ -53,7 +53,7 @@
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;">
               <strong>Branch Group</strong>
               {% if can_select_branch %}
-              <button type="button" class="btn btn-sm btn-outline manual-order-remove-group" style="display:none;">Remove Branch Group</button>
+              <button type="button" class="btn btn-sm btn-outline manual-order-remove-group" style="display:none;touch-action:manipulation;">Remove Branch Group</button>
               {% endif %}
             </div>
             {% if can_select_branch %}
@@ -72,7 +72,7 @@
 
             <div class="manual-order-rows" style="display:flex;flex-direction:column;gap:10px;"></div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:12px;flex-wrap:wrap;">
-              <button type="button" class="btn btn-secondary manual-order-add-row">Add Product</button>
+              <button type="button" class="btn btn-secondary manual-order-add-row" style="touch-action:manipulation;">Add Product</button>
               {% if can_select_branch %}
               <small class="text-muted">Add more products under this branch, or create another branch group.</small>
               {% endif %}
@@ -81,10 +81,10 @@
         </div>
 
         {% if can_select_branch %}
-        <button type="button" id="manual-order-add-group" class="btn btn-outline" style="margin-top:4px;margin-bottom:12px;">Add Branch Group</button>
+        <button type="button" id="manual-order-add-group" class="btn btn-outline" style="margin-top:4px;margin-bottom:12px;touch-action:manipulation;">Add Branch Group</button>
         {% endif %}
 
-        <div class="modal-footer" style="padding:0;margin-top:16px">
+        <div class="modal-footer manual-order-footer" style="padding:0;margin-top:16px">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML=''">Cancel</button>
           <button type="submit" id="manual-order-submit" class="btn btn-primary">Create Order</button>
         </div>
@@ -172,7 +172,7 @@
           <input type="number" name="packets[]" class="form-input manual-order-packets" required min="1" step="1" placeholder="e.g. 5">
         </div>
         <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
-          <button type="button" class="btn btn-outline manual-order-remove-row" style="white-space:nowrap;">Remove</button>
+          <button type="button" class="btn btn-outline manual-order-remove-row" style="white-space:nowrap;touch-action:manipulation;">Remove</button>
         </div>
       </div>
       <div class="manual-order-helper text-xs text-muted" style="margin-top:6px;"></div>
@@ -338,9 +338,10 @@
     syncGroupRows(group);
   });
 
-  groupsContainer.addEventListener("click", (event) => {
+  function handleActionEvent(event) {
     const addRowButton = event.target.closest(".manual-order-add-row");
     if (addRowButton) {
+      event.preventDefault();
       const group = addRowButton.closest(".manual-order-group");
       if (group) addRow(group);
       return;
@@ -348,6 +349,7 @@
 
     const removeRowButton = event.target.closest(".manual-order-remove-row");
     if (removeRowButton) {
+      event.preventDefault();
       const row = removeRowButton.closest(".manual-order-row");
       const group = removeRowButton.closest(".manual-order-group");
       if (!row || !group) return;
@@ -361,6 +363,7 @@
 
     const removeGroupButton = event.target.closest(".manual-order-remove-group");
     if (removeGroupButton) {
+      event.preventDefault();
       const group = removeGroupButton.closest(".manual-order-group");
       const groupCount = groupsContainer.querySelectorAll(".manual-order-group").length;
       if (!group || groupCount <= 1) return;
@@ -368,11 +371,24 @@
       updateGroupRemoveButtons();
       validateRows();
     }
-  });
+  }
 
-  addGroupButton?.addEventListener("click", () => {
+  groupsContainer.addEventListener("click", handleActionEvent);
+  groupsContainer.addEventListener("pointerup", handleActionEvent);
+  groupsContainer.addEventListener("touchend", handleActionEvent, { passive: false });
+
+  addGroupButton?.addEventListener("click", (event) => {
+    event.preventDefault();
     addGroup();
   });
+  addGroupButton?.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    addGroup();
+  });
+  addGroupButton?.addEventListener("touchend", (event) => {
+    event.preventDefault();
+    addGroup();
+  }, { passive: false });
 
   form.addEventListener("input", validateRows);
   form.addEventListener("change", (event) => {
