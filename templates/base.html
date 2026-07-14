@@ -235,6 +235,7 @@
     document.addEventListener("DOMContentLoaded", () => initTomSelect(document));
     document.body.addEventListener("htmx:afterSwap", (event) => initTomSelect(event.target));
   </script>
+  <script src="{% static 'js/manual-order.js' %}"></script>
 
   {% block extra_js %}{% endblock %}
 </body>
