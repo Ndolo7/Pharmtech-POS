@@ -596,7 +596,7 @@ def manual_order_create_view(request):
 
         line_count = len(grouped_lines)
         if request.htmx:
-            return _with_hx_trigger(
+            response = _with_hx_trigger(
                 HttpResponse(""),
                 "stock-action-success",
                 {
@@ -607,6 +607,8 @@ def manual_order_create_view(request):
                     )
                 },
             )
+            response.headers["X-Skip-HX-Refresh"] = "true"
+            return response
         messages.success(
             request,
             "Manual order created and queued for supplier notifications."

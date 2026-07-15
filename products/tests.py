@@ -1126,6 +1126,7 @@ class ManualOrderCreateViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Skip-HX-Refresh"), "true")
         existing_manual.refresh_from_db()
         self.assertEqual(existing_manual.requested_quantity, 6)
         self.assertEqual(existing_manual.remaining_quantity, 6)
@@ -1190,6 +1191,7 @@ class ManualOrderCreateViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Skip-HX-Refresh"), "true")
         self.assertTrue(Supplier.objects.filter(name__iexact="Unregistered Supplier").exists())
         notify_delay.assert_not_called()
 
