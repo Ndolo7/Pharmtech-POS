@@ -286,26 +286,13 @@
       }
     }
 
+    // Use click only so a single user action creates a single row on all devices.
     groupsContainer.addEventListener("click", handleActionEvent);
-    groupsContainer.addEventListener("pointerup", handleActionEvent);
-    groupsContainer.addEventListener("touchend", handleActionEvent, { passive: false });
 
     addGroupButton?.addEventListener("click", (event) => {
       event.preventDefault();
       addGroup();
     });
-    addGroupButton?.addEventListener("pointerup", (event) => {
-      event.preventDefault();
-      addGroup();
-    });
-    addGroupButton?.addEventListener(
-      "touchend",
-      (event) => {
-        event.preventDefault();
-        addGroup();
-      },
-      { passive: false },
-    );
 
     form.addEventListener("input", validateRows);
     form.addEventListener("change", (event) => {
