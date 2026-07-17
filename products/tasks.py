@@ -109,6 +109,13 @@ def _auto_reorder_target_units(max_stock_units: int, current_stock_units: int, p
     return max(safe_max_stock - safe_current_stock, 0)
 
 
+def _auto_order_stale_days() -> int:
+    try:
+        return max(int(getattr(settings, "AUTO_ORDER_STALE_DAYS", 75) or 75), 1)
+    except (TypeError, ValueError):
+        return 75
+
+
 def _is_primary_live_supplier_request(supplier_request: SupplierReorderRequest, now=None) -> bool:
     reference_time = now or timezone.now()
     first_live_request_id = (
@@ -533,6 +540,19 @@ def scan_low_stock_and_trigger_reorders():
         if branch_id in active_branch_by_id:
             sold_branches_by_product[int(product_id)].add(int(branch_id))
     sold_product_ids = set(sold_branches_by_product.keys())
+
+    stale_days = _auto_order_stale_days()
+    stale_cutoff = now - timedelta(days=stale_days)
+    stale_product_ids = set(
+        Product.objects.filter(is_active=True, exempt_from_auto_reorder=False)
+        .annotate(last_sale=Max("saleitem__sale__created_at"))
+        .filter(Q(last_sale__lt=stale_cutoff) | Q(last_sale__isnull=True))
+        .values_list("id", flat=True)
+    )
+    if stale_product_ids:
+        Product.objects.filter(id__in=stale_product_ids, is_active=True, exempt_from_auto_reorder=False).update(
+            exempt_from_auto_reorder=True,
+        )
 
     if sold_product_ids:
         cancelled_unsold_count = AutoReorderRequest.objects.filter(

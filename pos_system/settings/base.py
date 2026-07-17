@@ -125,6 +125,7 @@ SMS_LEOPARD_API_SECRET = config("SMS_LEOPARD_API_SECRET", default="")
 SMS_LEOPARD_SOURCE = config("SMS_LEOPARD_SOURCE", default="SMS_Leopard")
 
 # Automated reorder settings
+AUTO_ORDER_STALE_DAYS = max(1, config("AUTO_ORDER_STALE_DAYS", default=75, cast=int))
 SITE_BASE_URL = config("SITE_BASE_URL", default="http://localhost:8000")
 AUTO_ORDER_LINK_EXPIRY_SECONDS = max(60, config("AUTO_ORDER_LINK_EXPIRY_SECONDS", default=3600, cast=int))
 AUTO_ORDER_CHECK_INTERVAL_MINUTES = max(1, config("AUTO_ORDER_CHECK_INTERVAL_MINUTES", default=15, cast=int))

@@ -250,7 +250,9 @@ class AutoReorderScanTests(TestCase):
 
         result = scan_low_stock_and_trigger_reorders()
 
+        unsold_product.refresh_from_db()
         stale_unsold_reorder.refresh_from_db()
+        self.assertTrue(unsold_product.exempt_from_auto_reorder)
         self.assertEqual(stale_unsold_reorder.status, AutoReorderRequest.STATUS_CANCELLED)
         self.assertIsNotNone(stale_unsold_reorder.completed_at)
         self.assertFalse(
@@ -275,6 +277,39 @@ class AutoReorderScanTests(TestCase):
         self.assertEqual(sold_reorder.branch_requirements, {"Wendani": 5})
         self.assertGreaterEqual(result.get("cancelled_unsold", 0), 1)
         notify_delay.assert_called_once()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_marks_products_unsold_for_75_days_exempt(self, notify_delay):
+        stale_product = Product.objects.create(
+            name="Stale Product",
+            barcode="TEST-STALE-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        recent_product = Product.objects.create(
+            name="Recent Product",
+            barcode="TEST-RECENT-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        self._mark_product_as_sold(stale_product, branch=self.wendani, quantity=1, days_ago=76)
+        self._mark_product_as_sold(recent_product, branch=self.wendani, quantity=1, days_ago=74)
+
+        scan_low_stock_and_trigger_reorders()
+
+        stale_product.refresh_from_db()
+        recent_product.refresh_from_db()
+        self.assertTrue(stale_product.exempt_from_auto_reorder)
+        self.assertFalse(recent_product.exempt_from_auto_reorder)
+        notify_delay.assert_not_called()
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_only_considers_products_sold_yesterday(self, notify_delay):
@@ -1195,6 +1230,16 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertTrue(Supplier.objects.filter(name__iexact="Unregistered Supplier").exists())
         notify_delay.assert_not_called()
 
+    def test_create_order_marks_exempt_products_in_row_markup(self):
+        self.product_one.exempt_from_auto_reorder = True
+        self.product_one.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+
+        response = self.client.get(reverse("create-order"), HTTP_HX_REQUEST="true")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-exempt="1"')
+        self.assertContains(response, self.product_one.name)
+
     @patch("products.views.notify_next_supplier.delay")
     def test_create_order_unregistered_supplier_items_show_in_pending_orders(self, notify_delay):
         response = self.client.post(
@@ -1218,6 +1263,30 @@ class ManualOrderCreateViewTests(TestCase):
         )
         self.assertEqual(pending_response.status_code, 200)
         self.assertContains(pending_response, self.product_one.name)
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_updates_exempt_from_auto_reorder_status(self, notify_delay):
+        self.product_one.exempt_from_auto_reorder = False
+        self.product_one.save()
+        self.product_two.exempt_from_auto_reorder = True
+        self.product_two.save()
+
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "product_id[]": [str(self.product_one.id), str(self.product_two.id)],
+                "branch_id[]": [str(self.branch_a.id), str(self.branch_b.id)],
+                "packets[]": ["3", "2"],
+                "exempt_from_auto_reorder[]": ["1", "0"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.product_one.refresh_from_db()
+        self.product_two.refresh_from_db()
+        self.assertTrue(self.product_one.exempt_from_auto_reorder)
+        self.assertFalse(self.product_two.exempt_from_auto_reorder)
 
 
 class ReceiveStockPricingValidationTests(TestCase):
