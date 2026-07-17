@@ -88,6 +88,10 @@
             <button type="button" class="btn btn-outline manual-order-remove-row" style="white-space:nowrap;touch-action:manipulation;">Remove</button>
           </div>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input type="checkbox" class="manual-order-exempt-indicator" disabled>
+          <label class="text-xs text-muted" style="margin:0;">Exempt from auto reorder</label>
+        </div>
         <div class="manual-order-helper text-xs text-muted" style="margin-top:6px;"></div>
         <div class="manual-order-error text-xs text-danger" style="margin-top:4px;display:none;"></div>
       `;
@@ -137,6 +141,12 @@
       });
     }
 
+    function syncExemptIndicator(row, selectedOption) {
+      const exemptIndicator = row.querySelector(".manual-order-exempt-indicator");
+      if (!exemptIndicator) return;
+      exemptIndicator.checked = selectedOption?.dataset.exempt === "1";
+    }
+
     function validateRows() {
       const rows = groupsContainer.querySelectorAll(".manual-order-row");
       if (!submitButton || !rows.length) return;
@@ -154,6 +164,7 @@
         const selectedOption = productSelect?.selectedOptions?.[0] || null;
         const productId = productSelect?.value || "";
         const branchCapacity = (capacityData[productId] && capacityData[productId][branchId]) ? capacityData[productId][branchId] : null;
+        syncExemptIndicator(row, selectedOption);
         const absoluteMaxPackets = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null;
         const packQty = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-pack-qty")) : null;
         const maxStock = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-stock")) : null;

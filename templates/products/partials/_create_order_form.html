@@ -95,6 +95,6 @@
 <script id="manual-order-capacity-data" type="application/json">{{ manual_order_capacity_json|safe }}</script>
 <template id="manual-order-product-options">
   {% for p in products %}
-  <option value="{{ p.id }}" data-pack-qty="{{ p.pack_quantity|default:1 }}" data-max-stock="{{ p.max_stock }}" data-max-packets="{{ p.max_packets_allowed }}">{{ p.name }}</option>
+  <option value="{{ p.id }}" data-pack-qty="{{ p.pack_quantity|default:1 }}" data-max-stock="{{ p.max_stock }}" data-max-packets="{{ p.max_packets_allowed }}" data-exempt="{% if p.exempt_from_auto_reorder %}1{% else %}0{% endif %}">{{ p.name }}</option>
   {% endfor %}
 </template>
