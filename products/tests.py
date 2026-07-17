@@ -1264,6 +1264,30 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(pending_response.status_code, 200)
         self.assertContains(pending_response, self.product_one.name)
 
+    @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_updates_exempt_from_auto_reorder_status(self, notify_delay):
+        self.product_one.exempt_from_auto_reorder = False
+        self.product_one.save()
+        self.product_two.exempt_from_auto_reorder = True
+        self.product_two.save()
+
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "product_id[]": [str(self.product_one.id), str(self.product_two.id)],
+                "branch_id[]": [str(self.branch_a.id), str(self.branch_b.id)],
+                "packets[]": ["3", "2"],
+                "exempt_from_auto_reorder[]": ["1", "0"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.product_one.refresh_from_db()
+        self.product_two.refresh_from_db()
+        self.assertTrue(self.product_one.exempt_from_auto_reorder)
+        self.assertFalse(self.product_two.exempt_from_auto_reorder)
+
 
 class ReceiveStockPricingValidationTests(TestCase):
     def setUp(self):
