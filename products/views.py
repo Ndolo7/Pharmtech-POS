@@ -404,6 +404,7 @@ def manual_order_create_view(request):
         product_ids = request.POST.getlist("product_id[]")
         branch_ids = request.POST.getlist("branch_id[]")
         packet_values = request.POST.getlist("packets[]")
+        exempt_values = request.POST.getlist("exempt_from_auto_reorder[]")
 
         # Backward compatibility for single-line submissions.
         if not product_ids and request.POST.get("product_id"):
@@ -411,6 +412,7 @@ def manual_order_create_view(request):
             packet_values = [request.POST.get("packets")]
             if can_select_branch:
                 branch_ids = [request.POST.get("branch_id")]
+            exempt_values = [request.POST.get("exempt_from_auto_reorder", "0")]
 
         if not product_ids or not packet_values:
             return HttpResponseBadRequest("Add at least one valid order line.")
@@ -424,10 +426,17 @@ def manual_order_create_view(request):
         if not can_select_branch and not active_branch:
             return HttpResponseBadRequest("You are not assigned to a valid branch.")
 
+        # Pad or truncate exempt_values to match product_ids length.
+        if len(exempt_values) < len(product_ids):
+            exempt_values += ["0"] * (len(product_ids) - len(exempt_values))
+        elif len(exempt_values) > len(product_ids):
+            exempt_values = exempt_values[:len(product_ids)]
+
         parsed_lines = []
-        for index, (product_id_raw, packets_raw) in enumerate(zip(product_ids, packet_values), start=1):
+        for index, (product_id_raw, packets_raw, exempt_raw) in enumerate(zip(product_ids, packet_values, exempt_values), start=1):
             product_id_raw = str(product_id_raw or "").strip()
             packets_raw = str(packets_raw or "").strip()
+            exempt_raw = str(exempt_raw or "0").strip()
 
             if not product_id_raw and not packets_raw:
                 continue
@@ -458,7 +467,8 @@ def manual_order_create_view(request):
             except (TypeError, ValueError):
                 return HttpResponseBadRequest(f"Invalid product/branch values on line {index}.")
 
-            parsed_lines.append((product_id, branch_id, packets))
+            is_exempt = exempt_raw == "1"
+            parsed_lines.append((product_id, branch_id, packets, is_exempt))
 
         if not parsed_lines:
             return HttpResponseBadRequest("Add at least one valid order line.")
@@ -478,11 +488,14 @@ def manual_order_create_view(request):
         grouped_lines = defaultdict(int)
         product_branch_requirements = defaultdict(lambda: defaultdict(int))
         product_packet_totals = defaultdict(int)
-        for product_id, branch_id, packets in parsed_lines:
+        product_exempt_choice = {}
+
+        for product_id, branch_id, packets, is_exempt in parsed_lines:
             grouped_lines[(product_id, branch_id)] += packets
             product_packet_totals[product_id] += packets
             branch = branch_map[branch_id]
             product_branch_requirements[product_id][branch.name] += packets
+            product_exempt_choice[product_id] = is_exempt
 
         # Validate each line against the branch headroom and absolute packet cap.
         for (product_id, branch_id), requested_packets in grouped_lines.items():
@@ -510,6 +523,12 @@ def manual_order_create_view(request):
         unregistered_supplier = _get_or_create_unregistered_supplier(unregistered_supplier_name) if supplier_strategy == "unregistered" else None
 
         with transaction.atomic():
+            # Update product exemption status
+            for product_id, is_exempt in product_exempt_choice.items():
+                product = product_map[product_id]
+                if product.exempt_from_auto_reorder != is_exempt:
+                    product.exempt_from_auto_reorder = is_exempt
+                    product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
             for product_id, packets in product_packet_totals.items():
                 product = product_map[product_id]
                 branch_requirements = dict(product_branch_requirements[product_id])
