@@ -227,7 +227,8 @@
         }
       });
 
-      submitButton.disabled = !allValid;
+      submitButton.disabled = false;
+      submitButton.dataset.manualOrderValid = allValid ? "1" : "0";
     }
 
     function updateSupplierStrategyUI() {
