@@ -45,7 +45,13 @@
         <div class="message message-info" style="margin-bottom:12px;max-width:none">
           Ordering for branch: <strong>{{ active_branch.name }}</strong>
         </div>
+        {% else %}
+        <div class="message message-error" style="margin-bottom:12px;max-width:none">
+          You are not assigned to a branch. Ask an admin to assign your user account to a branch before creating a manual order.
+        </div>
         {% endif %}
+
+        <div id="manual-order-submit-error" class="message message-error" style="display:none;margin-bottom:12px;max-width:none"></div>
 
         <div id="manual-order-group-list" data-can-select-branch="{% if can_select_branch %}1{% else %}0{% endif %}">
           <div class="manual-order-group card" style="padding:12px;margin-bottom:12px;" data-group-index="0">
