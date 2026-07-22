@@ -147,7 +147,7 @@
 
     function validateRows() {
       const rows = groupsContainer.querySelectorAll(".manual-order-row");
-      if (!submitButton || !rows.length) return;
+      if (!submitButton || !rows.length) return false;
 
       let allValid = true;
 
@@ -229,6 +229,7 @@
 
       submitButton.disabled = false;
       submitButton.dataset.manualOrderValid = allValid ? "1" : "0";
+      return allValid;
     }
 
     function updateSupplierStrategyUI() {
@@ -303,6 +304,8 @@
       addGroup();
     });
 
+    form.noValidate = true;
+
     form.addEventListener("input", validateRows);
     form.addEventListener("change", (event) => {
       validateRows();
@@ -332,6 +335,15 @@
         }
       }
     });
+
+    form.addEventListener("submit", (event) => {
+      refreshBranchIds();
+      if (validateRows()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const firstError = groupsContainer.querySelector('.manual-order-error[style*="block"]');
+      if (firstError) firstError.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, true);
 
     const closeButtons = form.querySelectorAll("[data-manual-order-close]");
     closeButtons.forEach((button) => {
