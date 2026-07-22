@@ -1178,6 +1178,37 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(notified_ids, {existing_manual.id, second_reorder.id})
 
     @patch("products.views.notify_next_supplier.delay")
+    def test_pharmtec_can_create_manual_order_for_assigned_branch(self, notify_delay):
+        pharmtec_user = User.objects.create_user(
+            username="manual_pharmtec",
+            password="pass12345",
+            role="pharmtec",
+            branch=self.branch_b,
+        )
+        self.client.force_login(pharmtec_user)
+
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "product_id[]": [str(self.product_one.id)],
+                "packets[]": ["2"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Skip-HX-Refresh"), "true")
+        reorder = AutoReorderRequest.objects.get(
+            product=self.product_one,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+        )
+        self.assertEqual(reorder.requested_quantity, 2)
+        self.assertEqual(reorder.branch_requirements, {self.branch_b.name: 2})
+        self.assertEqual(reorder.created_by, pharmtec_user)
+        self.assertEqual(reorder.approval_status, AutoReorderRequest.APPROVAL_PENDING)
+        notify_delay.assert_not_called()
+
+    @patch("products.views.notify_next_supplier.delay")
     def test_create_order_rejects_packets_above_product_max(self, notify_delay):
         response = self.client.post(
             reverse("create-order"),

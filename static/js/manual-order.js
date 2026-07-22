@@ -21,15 +21,48 @@
     const submitButton = getRootElement(scope, "#manual-order-submit");
     const capacityDataNode = getRootElement(scope, "#manual-order-capacity-data");
     const productOptionsNode = getRootElement(scope, "#manual-order-product-options");
+    const submitError = getRootElement(scope, "#manual-order-submit-error");
     if (!groupsContainer || !submitButton) return;
 
     const canSelectBranch = groupsContainer?.dataset.canSelectBranch === "1";
+    const defaultSubmitText = submitButton.textContent;
     let capacityData = {};
 
     try {
       capacityData = capacityDataNode ? JSON.parse(capacityDataNode.textContent || "{}") : {};
     } catch (error) {
       capacityData = {};
+    }
+
+    function normalizeErrorMessage(rawMessage, fallback) {
+      const message = String(rawMessage || "").trim();
+      if (!message) return fallback;
+      if (!message.includes("<")) return message;
+
+      try {
+        const parsed = new DOMParser().parseFromString(message, "text/html");
+        return (parsed.body?.textContent || fallback).replace(/\s+/g, " ").trim();
+      } catch (error) {
+        return fallback;
+      }
+    }
+
+    function showSubmitError(message) {
+      if (!submitError) return;
+      submitError.textContent = message;
+      submitError.style.display = "block";
+      submitError.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+
+    function clearSubmitError() {
+      if (!submitError) return;
+      submitError.textContent = "";
+      submitError.style.display = "none";
+    }
+
+    function setSubmitBusy(isBusy) {
+      submitButton.disabled = Boolean(isBusy);
+      submitButton.textContent = isBusy ? "Creating order..." : defaultSubmitText;
     }
 
     function normalizeSearchSelects(searchRoot) {
@@ -173,7 +206,12 @@
         let errorText = "";
         let helperText = "Amount is in supplier packet sizes, not individual units.";
 
-        if (canSelectBranch && !branchSelect?.value) {
+        if (!branchId) {
+          rowValid = false;
+          errorText = canSelectBranch
+            ? "Select a branch for this group."
+            : "You are not assigned to a branch. Ask an admin to update your user account.";
+        } else if (canSelectBranch && !branchSelect?.value) {
           rowValid = false;
           errorText = "Select a branch for this group.";
         } else if (!productSelect?.value) {
@@ -337,6 +375,7 @@
     });
 
     form.addEventListener("submit", (event) => {
+      clearSubmitError();
       refreshBranchIds();
       if (validateRows()) return;
       event.preventDefault();
@@ -365,7 +404,26 @@
       });
     }
 
+    form.addEventListener("htmx:beforeRequest", () => {
+      clearSubmitError();
+      setSubmitBusy(true);
+    });
+
+    form.addEventListener("htmx:responseError", (event) => {
+      const xhr = event.detail?.xhr;
+      const message = normalizeErrorMessage(
+        xhr?.responseText,
+        "Manual order could not be created. Check the selected products, branch, and supplier, then try again."
+      );
+      showSubmitError(message);
+    });
+
+    form.addEventListener("htmx:sendError", () => {
+      showSubmitError("Manual order could not be sent. Check your connection and try again.");
+    });
+
     form.addEventListener("htmx:afterRequest", (event) => {
+      setSubmitBusy(false);
       if (!event.detail || !event.detail.successful) return;
       const modalContainer = document.getElementById("modal-container");
       if (modalContainer) modalContainer.innerHTML = "";
