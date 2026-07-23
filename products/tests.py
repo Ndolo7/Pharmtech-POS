@@ -1319,6 +1319,67 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertTrue(self.product_one.exempt_from_auto_reorder)
         self.assertFalse(self.product_two.exempt_from_auto_reorder)
 
+    @patch("products.views.notify_next_supplier.delay")
+    def test_bulk_approval_updates_quantities_and_rejects_zero_quantity_orders(self, notify_delay):
+        approve_order = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_a.name: 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        reject_order = AutoReorderRequest.objects.create(
+            product=self.product_two,
+            target_stock_level=60,
+            current_stock_snapshot=0,
+            requested_quantity=3,
+            remaining_quantity=3,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_b.name: 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        response = self.client.post(
+            reverse("manual-order-bulk-approval"),
+            data={
+                "order_ids[]": [str(approve_order.id), str(reject_order.id)],
+                f"quantity_{approve_order.id}": "4",
+                f"quantity_{reject_order.id}": "0",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Orders have been approved")
+
+        approve_order.refresh_from_db()
+        self.assertEqual(approve_order.approval_status, AutoReorderRequest.APPROVAL_APPROVED)
+        self.assertEqual(approve_order.requested_quantity, 4)
+        self.assertEqual(approve_order.remaining_quantity, 4)
+        self.assertEqual(approve_order.branch_requirements, {self.branch_a.name: 4})
+        self.assertEqual(approve_order.approved_by, self.admin_user)
+
+        reject_order.refresh_from_db()
+        self.assertEqual(reject_order.approval_status, AutoReorderRequest.APPROVAL_REJECTED)
+        self.assertEqual(reject_order.status, AutoReorderRequest.STATUS_CANCELLED)
+        self.assertEqual(reject_order.remaining_quantity, 0)
+        self.assertEqual(reject_order.approved_by, self.admin_user)
+
+        notify_delay.assert_called_once_with(approve_order.id)
+        self.assertFalse(
+            AutoReorderRequest.objects.filter(
+                origin=AutoReorderRequest.ORIGIN_MANUAL,
+                approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            ).exists()
+        )
+
 
 class ReceiveStockPricingValidationTests(TestCase):
     def setUp(self):

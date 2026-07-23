@@ -6,48 +6,63 @@
 <div class="card mb-4">
   <div class="card-header"><h2>Pending Manual Orders</h2></div>
   <div class="card-body">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>Branch</th>
-            <th>Packets</th>
-            <th>Created By</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for order in pending_manual_orders %}
-          <tr>
-            <td class="font-medium">{{ order.product.name }}</td>
-            <td>
-              {% for branch_name, qty in order.branch_requirements.items %}
-                <div>{{ branch_name }}: {{ qty }} packet(s)</div>
-              {% empty %}
-                <span class="text-muted">-</span>
-              {% endfor %}
-            </td>
-            <td>{{ order.requested_quantity }}</td>
-            <td>{% if order.created_by %}{{ order.created_by.get_full_name|default:order.created_by.username }}{% else %}-{% endif %}</td>
-            <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
-            <td>
-              <form method="post" action="{% url 'manual-order-approval-action' order.id %}" class="flex gap-2">
-                {% csrf_token %}
-                <button type="submit" name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
-                <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger">Reject</button>
-              </form>
-            </td>
-          </tr>
-          {% empty %}
-          <tr>
-            <td colspan="6"><div class="empty-state">No manual orders are waiting for approval.</div></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <form method="post" action="{% url 'manual-order-bulk-approval' %}">
+      {% csrf_token %}
+      <div class="message message-info" style="margin-bottom:12px;max-width:none">
+        Edit the packets to approve. Enter 0 for any order you want to disapprove.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Branch</th>
+              <th>Packets</th>
+              <th>Created By</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in pending_manual_orders %}
+            <tr>
+              <td class="font-medium">{{ order.product.name }}</td>
+              <td>
+                {% for branch_name, qty in order.branch_requirements.items %}
+                  <div>{{ branch_name }}: {{ qty }} packet(s)</div>
+                {% empty %}
+                  <span class="text-muted">-</span>
+                {% endfor %}
+              </td>
+              <td style="min-width:120px;">
+                <input type="hidden" name="order_ids[]" value="{{ order.id }}">
+                <input
+                  type="number"
+                  name="quantity_{{ order.id }}"
+                  value="{{ order.requested_quantity }}"
+                  min="0"
+                  step="1"
+                  class="form-input"
+                  aria-label="Packets to approve for {{ order.product.name }}"
+                  required
+                >
+              </td>
+              <td>{% if order.created_by %}{{ order.created_by.get_full_name|default:order.created_by.username }}{% else %}-{% endif %}</td>
+              <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="5"><div class="empty-state">No manual orders are waiting for approval.</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if pending_manual_orders %}
+      <div class="modal-footer" style="padding:14px 0 0;margin-top:16px;justify-content:flex-end;">
+        <button type="submit" class="btn btn-primary">Approve Orders</button>
+      </div>
+      {% endif %}
+    </form>
   </div>
 </div>
 
