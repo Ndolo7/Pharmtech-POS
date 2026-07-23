@@ -707,6 +707,145 @@ def manual_order_approval_list_view(request):
     )
 
 
+def _resize_branch_requirements(branch_requirements, approved_quantity):
+    approved_quantity = _to_non_negative_int(approved_quantity)
+    if approved_quantity <= 0:
+        return {}
+
+    normalized_requirements = _normalized_branch_requirements(branch_requirements or {})
+    if not normalized_requirements:
+        return {"Unspecified Branch": approved_quantity}
+
+    if len(normalized_requirements) == 1:
+        return {normalized_requirements[0][0]: approved_quantity}
+
+    total_requested = sum(qty for _, qty in normalized_requirements)
+    if approved_quantity >= total_requested:
+        resized = {branch_name: qty for branch_name, qty in normalized_requirements}
+        extra_quantity = approved_quantity - total_requested
+        if extra_quantity > 0:
+            last_branch_name = normalized_requirements[-1][0]
+            resized[last_branch_name] += extra_quantity
+        return resized
+
+    allocations = _allocate_confirmed_branch_quantities(branch_requirements or {}, approved_quantity)
+    return {branch_name: qty for branch_name, qty in allocations}
+
+
+@login_required
+@require_POST
+def manual_order_bulk_approval_view(request):
+    if not request.user.can_approve_manual_orders():
+        return HttpResponseForbidden("Permission denied.")
+
+    order_ids = request.POST.getlist("order_ids[]")
+    if not order_ids:
+        messages.info(request, "No manual orders were selected for approval.")
+        return redirect("order-approvals")
+
+    try:
+        parsed_order_ids = sorted({int(order_id) for order_id in order_ids if str(order_id).strip()})
+    except (TypeError, ValueError):
+        messages.error(request, "Invalid manual order selection.")
+        return redirect("order-approvals")
+
+    if not parsed_order_ids:
+        messages.info(request, "No manual orders were selected for approval.")
+        return redirect("order-approvals")
+
+    requested_quantities = {}
+    for order_id in parsed_order_ids:
+        raw_quantity = (request.POST.get(f"quantity_{order_id}") or "").strip()
+        try:
+            quantity = int(raw_quantity)
+        except (TypeError, ValueError):
+            messages.error(request, "Enter a valid whole-number quantity for every manual order.")
+            return redirect("order-approvals")
+
+        if quantity < 0:
+            messages.error(request, "Manual order quantities cannot be negative.")
+            return redirect("order-approvals")
+        requested_quantities[order_id] = quantity
+
+    now = timezone.now()
+    approved_order_ids = []
+    approved_count = 0
+    rejected_count = 0
+
+    with transaction.atomic():
+        pending_orders = (
+            AutoReorderRequest.objects.select_for_update()
+            .filter(
+                pk__in=parsed_order_ids,
+                origin=AutoReorderRequest.ORIGIN_MANUAL,
+                approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            )
+            .select_related("product")
+        )
+        pending_order_map = {order.id: order for order in pending_orders}
+
+        for order_id in parsed_order_ids:
+            order = pending_order_map.get(order_id)
+            if not order:
+                continue
+
+            approved_quantity = requested_quantities[order_id]
+            if approved_quantity == 0:
+                order.approval_status = AutoReorderRequest.APPROVAL_REJECTED
+                order.status = AutoReorderRequest.STATUS_CANCELLED
+                order.remaining_quantity = 0
+                order.completed_at = now
+                order.approved_by = request.user
+                order.approved_at = now
+                order.save(
+                    update_fields=[
+                        "approval_status",
+                        "status",
+                        "remaining_quantity",
+                        "completed_at",
+                        "approved_by",
+                        "approved_at",
+                        "updated_at",
+                    ]
+                )
+                rejected_count += 1
+                continue
+
+            order.requested_quantity = approved_quantity
+            order.remaining_quantity = approved_quantity
+            order.branch_requirements = _resize_branch_requirements(order.branch_requirements, approved_quantity)
+            order.approval_status = AutoReorderRequest.APPROVAL_APPROVED
+            order.approved_by = request.user
+            order.approved_at = now
+            order.save(
+                update_fields=[
+                    "requested_quantity",
+                    "remaining_quantity",
+                    "branch_requirements",
+                    "approval_status",
+                    "approved_by",
+                    "approved_at",
+                    "updated_at",
+                ]
+            )
+            approved_order_ids.append(order.id)
+            approved_count += 1
+
+    for order_id in approved_order_ids:
+        notify_next_supplier.delay(order_id)
+
+    if approved_count or rejected_count:
+        messages.success(
+            request,
+            "Orders have been approved."
+            if not rejected_count
+            else "Orders have been approved. Orders with quantity 0 were disapproved.",
+        )
+    else:
+        messages.info(request, "No pending manual orders were available to approve.")
+    return redirect("order-approvals")
+
+
 @login_required
 @require_POST
 def manual_order_approval_action_view(request, pk):
