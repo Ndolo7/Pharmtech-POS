@@ -14,6 +14,7 @@ from branches.models import Branch
 from products.models import (
     AutoOrderScheduleSetting,
     AutoReorderRequest,
+    BranchSupplyRequest,
     Purchase,
     PurchaseItem,
     Product,
@@ -309,6 +310,62 @@ class AutoReorderScanTests(TestCase):
         recent_product.refresh_from_db()
         self.assertTrue(stale_product.exempt_from_auto_reorder)
         self.assertFalse(recent_product.exempt_from_auto_reorder)
+        notify_delay.assert_not_called()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    @patch("products.tasks.send_sms_via_leopard")
+    def test_scan_sends_sms_to_stale_source_branch_for_internal_supply(self, send_sms_mock, notify_delay):
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+        product = Product.objects.create(
+            name="Branch Supplied Item",
+            barcode="TEST-BRANCH-SMS-001",
+            unit_price=Decimal("30.00"),
+            cost_price=Decimal("18.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        Stock.objects.create(product=product, branch=self.wendani, quantity=0)
+        Stock.objects.create(product=product, branch=self.sukari, quantity=40)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1, days_ago=1)
+        self._mark_product_as_sold(product, branch=self.sukari, quantity=1, days_ago=76)
+
+        result = scan_low_stock_and_trigger_reorders()
+
+        branch_request = BranchSupplyRequest.objects.get(product=product)
+        self.assertEqual(branch_request.source_branch, self.sukari)
+        self.assertEqual(branch_request.destination_branch, self.wendani)
+        self.assertEqual(branch_request.requested_quantity, 5)
+        self.assertEqual(result.get("branch_supply_requests"), 1)
+        send_sms_mock.assert_called_once()
+        sms_kwargs = send_sms_mock.call_args.kwargs
+        self.assertEqual(sms_kwargs["destinations"], self.sukari.phone_number)
+        self.assertIn(product.name, sms_kwargs["message"])
+        self.assertIn(self.wendani.name, sms_kwargs["message"])
+        notify_delay.assert_not_called()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_exempt_product_remains_exempt_after_sale_and_scan(self, notify_delay):
+        product = Product.objects.create(
+            name="Already Exempt Item",
+            barcode="TEST-EXEMPT-STAYS-001",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("8.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            exempt_from_auto_reorder=True,
+            is_active=True,
+        )
+        Stock.objects.create(product=product, branch=self.wendani, quantity=0)
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1, days_ago=1)
+
+        scan_low_stock_and_trigger_reorders()
+
+        product.refresh_from_db()
+        self.assertTrue(product.exempt_from_auto_reorder)
+        self.assertFalse(AutoReorderRequest.objects.filter(product=product).exists())
         notify_delay.assert_not_called()
 
     @patch("products.tasks.notify_next_supplier.delay")
