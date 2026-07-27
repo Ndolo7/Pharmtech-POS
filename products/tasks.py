@@ -303,6 +303,7 @@ def _supplier_branch_ids_for_reorder(reorder: AutoReorderRequest) -> set[int]:
 
 
 def _pick_stale_supply_branch(product: Product, demand_branch: Branch, active_branches: list[Branch], stock_by_branch_id: dict[int, int], now_local) -> Branch | None:
+    stale_days = _auto_order_stale_days()
     last_sale_dates = _branch_last_sale_dates(product.id)
     stale_candidates = []
     for branch in active_branches:
@@ -316,7 +317,7 @@ def _pick_stale_supply_branch(product: Product, demand_branch: Branch, active_br
             continue
         last_sale_local_date = timezone.localtime(last_sale, now_local.tzinfo).date()
         days_since_sale = (now_local.date() - last_sale_local_date).days
-        if days_since_sale < 75:
+        if days_since_sale < stale_days:
             continue
         stale_candidates.append((days_since_sale, stock_qty, branch))
 
@@ -325,6 +326,38 @@ def _pick_stale_supply_branch(product: Product, demand_branch: Branch, active_br
 
     stale_candidates.sort(key=lambda item: (item[0], item[1], item[2].name.lower()), reverse=True)
     return stale_candidates[0][2]
+
+
+def _branch_supply_request_message_text(branch_request: BranchSupplyRequest) -> str:
+    return (
+        f"ZiadaRx branch stock request: {branch_request.destination_branch.name} needs "
+        f"{branch_request.requested_quantity} packet(s) of {branch_request.product.name}. "
+        f"Please confirm if {branch_request.source_branch.name} can supply."
+    )
+
+
+def _send_branch_supply_request_sms(branch_request: BranchSupplyRequest) -> dict:
+    sms_result = send_sms_via_leopard(
+        message=_branch_supply_request_message_text(branch_request),
+        destinations=branch_request.source_branch.phone_number,
+        log_extra={"branch_supply_request_id": branch_request.id, "event": "branch_supply_request_notification"},
+    )
+    if sms_result.get("success"):
+        return {"status": "sms_sent", "branch_supply_request_id": branch_request.id}
+
+    reason = str(sms_result.get("reason") or "").strip()
+    if reason in {"not_configured", "no_recipients"}:
+        logger.warning(
+            "Branch supply request SMS skipped",
+            extra={"branch_supply_request_id": branch_request.id, "reason": reason},
+        )
+        return {"status": "sms_skipped", "reason": reason, "branch_supply_request_id": branch_request.id}
+
+    logger.warning(
+        "Branch supply request SMS failed",
+        extra={"branch_supply_request_id": branch_request.id, "reason": reason or "unknown"},
+    )
+    return {"status": "sms_failed", "reason": reason or "unknown", "branch_supply_request_id": branch_request.id}
 
 
 def _upsert_branch_supply_request(product: Product, source_branch: Branch, destination_branch: Branch, requested_quantity: int, now, created_by=None):
@@ -343,6 +376,7 @@ def _upsert_branch_supply_request(product: Product, source_branch: Branch, desti
         if requested_quantity > request.requested_quantity:
             request.requested_quantity = requested_quantity
             request.save(update_fields=["requested_quantity", "updated_at"])
+            return request, True
         return request, False
 
     request = BranchSupplyRequest.objects.create(
@@ -353,7 +387,7 @@ def _upsert_branch_supply_request(product: Product, source_branch: Branch, desti
         created_by=created_by,
         status=BranchSupplyRequest.STATUS_PENDING,
         notes=(
-            f"Auto-created because {product.name} has been idle at {source_branch.name} for at least 75 days."
+            f"Auto-created because {product.name} has been idle at {source_branch.name} for at least {_auto_order_stale_days()} days."
         ),
     )
     return request, True
@@ -613,7 +647,9 @@ def scan_low_stock_and_trigger_reorders():
             supply_branch = _pick_stale_supply_branch(product, branch, active_branches, stock_by_branch_id, now_local)
             if supply_branch:
                 with transaction.atomic():
-                    _upsert_branch_supply_request(product, supply_branch, branch, packets, now)
+                    branch_request, should_notify_branch = _upsert_branch_supply_request(product, supply_branch, branch, packets, now)
+                if should_notify_branch:
+                    _send_branch_supply_request_sms(branch_request)
                 internal_supply_created += 1
                 internal_supply_created_for_branches.add(branch.name)
                 continue
