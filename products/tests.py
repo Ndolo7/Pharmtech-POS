@@ -1194,6 +1194,26 @@ class ManualOrderCreateViewTests(TestCase):
             is_active=True,
         )
 
+    def _mark_manual_product_as_sold(self, product, branch, days_ago=1):
+        sale = Sale.objects.create(
+            receipt_number=f"MANUAL-SALE-{product.id}-{branch.id}-{days_ago}",
+            branch=branch,
+            cashier=self.admin_user,
+            payment_method="cash",
+            cash_amount=Decimal("0.00"),
+            mpesa_amount=Decimal("0.00"),
+            credit_amount=Decimal("0.00"),
+            total_amount=Decimal(product.unit_price),
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            quantity=1,
+            unit_price=product.unit_price,
+            total_price=Decimal(product.unit_price),
+        )
+        Sale.objects.filter(pk=sale.pk).update(created_at=timezone.now() - timedelta(days=days_ago))
+
     @patch("products.views.notify_next_supplier.delay")
     def test_create_order_supports_multiple_products_and_branches(self, notify_delay):
         existing_manual = AutoReorderRequest.objects.create(
@@ -1280,6 +1300,100 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(AutoReorderRequest.objects.filter(origin=AutoReorderRequest.ORIGIN_MANUAL).count(), 0)
         notify_delay.assert_not_called()
+
+    @patch("products.views._send_branch_supply_request_sms")
+    @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_routes_dead_stock_product_to_source_branch_and_notifies_branch(self, notify_delay, branch_sms_mock):
+        branch_sms_mock.return_value = {"status": "sms_sent"}
+        Stock.objects.create(product=self.product_one, branch=self.branch_a, quantity=0)
+        Stock.objects.create(product=self.product_one, branch=self.branch_b, quantity=80)
+        self._mark_manual_product_as_sold(self.product_one, self.branch_b, days_ago=76)
+
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "product_id[]": [str(self.product_one.id)],
+                "branch_id[]": [str(self.branch_a.id)],
+                "packets[]": ["4"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        branch_request = BranchSupplyRequest.objects.get(product=self.product_one)
+        self.assertEqual(branch_request.source_branch, self.branch_b)
+        self.assertEqual(branch_request.destination_branch, self.branch_a)
+        self.assertEqual(branch_request.requested_quantity, 4)
+        self.assertFalse(AutoReorderRequest.objects.filter(product=self.product_one).exists())
+        branch_sms_mock.assert_called_once_with(branch_request)
+        notify_delay.assert_not_called()
+
+    def test_branch_supply_request_shows_as_expected_stock_from_source_branch(self):
+        branch_request = BranchSupplyRequest.objects.create(
+            product=self.product_one,
+            source_branch=self.branch_b,
+            destination_branch=self.branch_a,
+            requested_quantity=4,
+            status=BranchSupplyRequest.STATUS_PENDING,
+        )
+
+        receive_response = self.client.get(reverse("receive-stock"), HTTP_HX_REQUEST="true")
+        self.assertEqual(receive_response.status_code, 200)
+        self.assertContains(receive_response, f'value="branch-{self.branch_b.id}"')
+        self.assertContains(receive_response, "Branch: Sukari")
+
+        rows_response = self.client.get(
+            reverse("supplier-pending-orders"),
+            data={"supplier_id": f"branch-{self.branch_b.id}", "branch_id": str(self.branch_a.id)},
+        )
+        self.assertEqual(rows_response.status_code, 200)
+        self.assertContains(rows_response, self.product_one.name)
+        self.assertContains(rows_response, str(branch_request.requested_quantity))
+
+    def test_receive_stock_from_branch_source_completes_branch_transfer(self):
+        Stock.objects.create(product=self.product_one, branch=self.branch_a, quantity=0)
+        Stock.objects.create(product=self.product_one, branch=self.branch_b, quantity=80)
+        branch_request = BranchSupplyRequest.objects.create(
+            product=self.product_one,
+            source_branch=self.branch_b,
+            destination_branch=self.branch_a,
+            requested_quantity=4,
+            status=BranchSupplyRequest.STATUS_PENDING,
+        )
+
+        response = self.client.post(
+            reverse("receive-stock"),
+            data={
+                "supplier_id": f"branch-{self.branch_b.id}",
+                "branch_id": str(self.branch_a.id),
+                "branch_supply_request_id[]": [str(branch_request.id)],
+                "quantity[]": ["4"],
+                "cost_price[]": [str(self.product_one.cost_price)],
+                "selling_price[]": [str(self.product_one.unit_price)],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        branch_request.refresh_from_db()
+        self.assertEqual(branch_request.status, BranchSupplyRequest.STATUS_COMPLETED)
+        self.assertEqual(branch_request.fulfilled_quantity, 4)
+        self.assertEqual(Stock.objects.get(product=self.product_one, branch=self.branch_a).quantity, 4)
+        self.assertEqual(Stock.objects.get(product=self.product_one, branch=self.branch_b).quantity, 76)
+
+    def test_create_order_markup_indicates_dead_stock_branch_source(self):
+        Stock.objects.create(product=self.product_one, branch=self.branch_b, quantity=80)
+        self._mark_manual_product_as_sold(self.product_one, self.branch_b, days_ago=76)
+
+        response = self.client.get(
+            reverse("create-order"),
+            data={"branch": str(self.branch_a.id)},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '"internal_supply"')
+        self.assertContains(response, '"source_branch_name": "Sukari"')
 
     @patch("products.views.notify_next_supplier.delay")
     def test_create_order_capacity_ignores_open_auto_reorders(self, notify_delay):
