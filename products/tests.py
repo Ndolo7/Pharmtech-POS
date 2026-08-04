@@ -1282,6 +1282,38 @@ class ManualOrderCreateViewTests(TestCase):
         notify_delay.assert_not_called()
 
     @patch("products.views.notify_next_supplier.delay")
+    def test_create_order_capacity_ignores_open_auto_reorders(self, notify_delay):
+        AutoReorderRequest.objects.create(
+            product=self.product_limited,
+            target_stock_level=5,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={self.branch_a.name: 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        response = self.client.post(
+            reverse("create-order"),
+            data={
+                "product_id[]": [str(self.product_limited.id)],
+                "branch_id[]": [str(self.branch_a.id)],
+                "packets[]": ["5"],
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        manual_reorder = AutoReorderRequest.objects.get(
+            product=self.product_limited,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+        )
+        self.assertEqual(manual_reorder.requested_quantity, 5)
+        self.assertEqual(manual_reorder.branch_requirements, {self.branch_a.name: 5})
+        notify_delay.assert_called_once_with(manual_reorder.id)
+
+    @patch("products.views.notify_next_supplier.delay")
     def test_create_order_rejects_when_projected_stock_exceeds_max(self, notify_delay):
         Stock.objects.create(product=self.product_limited, branch=self.branch_a, quantity=3)
 
