@@ -201,6 +201,7 @@
         const availableUnits = branchCapacity ? parseIntSafe(branchCapacity.available_units) : null;
         const currentUnits = branchCapacity ? parseIntSafe(branchCapacity.current_units) : null;
         const pendingUnits = branchCapacity ? parseIntSafe(branchCapacity.pending_units) : null;
+        const internalSupply = branchCapacity && branchCapacity.internal_supply ? branchCapacity.internal_supply : null;
 
         let rowValid = true;
         let errorText = "";
@@ -239,6 +240,10 @@
           helperText = `Needed: ${branchCapacity.max_packets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
         } else if (absoluteMaxPackets !== null && packQty && maxStock) {
           helperText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
+        }
+
+        if (internalSupply && internalSupply.source_branch_name) {
+          helperText += ` This product is dead stock at ${internalSupply.source_branch_name}; it will be ordered from that branch and excluded from supplier routing.`;
         }
 
         if (!rowValid) {
