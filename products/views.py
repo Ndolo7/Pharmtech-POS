@@ -44,7 +44,13 @@ from .models import (
     Transfer,
     TransferItem,
 )
-from .tasks import notify_next_supplier, send_purchase_confirmation_to_supplier
+from .tasks import (
+    _pick_stale_supply_branch,
+    _send_branch_supply_request_sms,
+    _upsert_branch_supply_request,
+    notify_next_supplier,
+    send_purchase_confirmation_to_supplier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +242,45 @@ def _manual_order_supplier_queryset(reorder):
     return supplier_qs
 
 
+def _manual_order_internal_supply_source(product, destination_branch, active_branches=None, now_local=None):
+    if not product or not destination_branch:
+        return None
+    branch_scope = list(active_branches) if active_branches is not None else list(Branch.objects.filter(is_active=True))
+    stock_by_branch_id = {
+        stock.branch_id: int(stock.quantity or 0)
+        for stock in product.stock_set.filter(branch__is_active=True).only("branch_id", "quantity")
+    }
+    return _pick_stale_supply_branch(
+        product,
+        destination_branch,
+        branch_scope,
+        stock_by_branch_id,
+        now_local or timezone.localtime(timezone.now()),
+    )
+
+
+def _pending_branch_source_choices(destination_branch=None):
+    qs = BranchSupplyRequest.objects.filter(status=BranchSupplyRequest.STATUS_PENDING)
+    if destination_branch:
+        qs = qs.filter(destination_branch=destination_branch)
+    source_ids = qs.values_list("source_branch_id", flat=True).distinct()
+    return Branch.objects.filter(id__in=source_ids, is_active=True).order_by("name")
+
+
+def _branch_supplier_value(branch_id):
+    return f"branch-{branch_id}"
+
+
+def _parse_branch_supplier_value(value):
+    raw_value = str(value or "").strip()
+    if not raw_value.startswith("branch-"):
+        return None
+    try:
+        return int(raw_value.split("-", 1)[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
 def _approve_branch_supply_request(request, branch_supply_request):
     now = timezone.now()
     with transaction.atomic():
@@ -335,9 +380,28 @@ def supplier_pending_orders_view(request):
     if not supplier_id:
         return HttpResponse("")
 
-    supplier = get_object_or_404(Supplier, pk=supplier_id)
     active_branch = _resolve_products_branch(request)
     can_edit_quantity = _can_edit_receive_packets(request.user)
+    branch_source_id = _parse_branch_supplier_value(supplier_id)
+
+    if branch_source_id:
+        source_branch = get_object_or_404(Branch, pk=branch_source_id, is_active=True)
+        branch_requests = BranchSupplyRequest.objects.filter(
+            source_branch=source_branch,
+            destination_branch=active_branch,
+            status=BranchSupplyRequest.STATUS_PENDING,
+        ).select_related("product", "source_branch", "destination_branch")
+        return render(
+            request,
+            "products/partials/_pending_order_rows.html",
+            {
+                "branch_supply_requests": branch_requests,
+                "branch_source": source_branch,
+                "can_edit_quantity": can_edit_quantity,
+            },
+        )
+
+    supplier = get_object_or_404(Supplier, pk=supplier_id)
     pending_requests = []
 
     orders = SupplierReorderRequest.objects.filter(
@@ -523,7 +587,26 @@ def manual_order_create_view(request):
                     f"{product.name} can only accept up to {available_units // pack_quantity} packet(s) for {branch.name}."
                 )
 
+        active_branch_scope = list(Branch.objects.filter(is_active=True))
+        now_local = timezone.localtime(timezone.now())
+        internal_supply_lines = []
+        product_branch_requirements = defaultdict(lambda: defaultdict(int))
+        product_packet_totals = defaultdict(int)
+
+        for (product_id, branch_id), requested_packets in grouped_lines.items():
+            product = product_map[product_id]
+            branch = branch_map[branch_id]
+            source_branch = _manual_order_internal_supply_source(product, branch, active_branch_scope, now_local)
+            if source_branch:
+                internal_supply_lines.append((product, source_branch, branch, requested_packets))
+                continue
+
+            product_branch_requirements[product_id][branch.name] += requested_packets
+            product_packet_totals[product_id] += requested_packets
+
         reorder_ids = set()
+        internal_supply_count = 0
+        branch_requests_to_notify = []
         unregistered_supplier = _get_or_create_unregistered_supplier(unregistered_supplier_name) if supplier_strategy == "unregistered" else None
 
         with transaction.atomic():
@@ -533,6 +616,20 @@ def manual_order_create_view(request):
                 if product.exempt_from_auto_reorder != is_exempt:
                     product.exempt_from_auto_reorder = is_exempt
                     product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+
+            for product, source_branch, destination_branch, requested_packets in internal_supply_lines:
+                branch_request, should_notify_branch = _upsert_branch_supply_request(
+                    product,
+                    source_branch,
+                    destination_branch,
+                    requested_packets,
+                    timezone.now(),
+                    created_by=request.user,
+                )
+                if should_notify_branch:
+                    branch_requests_to_notify.append(branch_request)
+                internal_supply_count += 1
+
             for product_id, packets in product_packet_totals.items():
                 product = product_map[product_id]
                 branch_requirements = dict(product_branch_requirements[product_id])
@@ -614,30 +711,32 @@ def manual_order_create_view(request):
                 elif not requires_admin_approval:
                     reorder_ids.add(reorder.id)
 
+        for branch_request in branch_requests_to_notify:
+            _send_branch_supply_request_sms(branch_request)
+
         for reorder_id in sorted(reorder_ids):
             notify_next_supplier.delay(reorder_id)
 
-        line_count = len(grouped_lines)
+        if internal_supply_count and reorder_ids:
+            success_message = "Manual order created. Dead-stock items were routed to branches; remaining items were queued for suppliers."
+        elif internal_supply_count:
+            success_message = "Manual order created. Dead-stock items were routed to the source branch."
+        else:
+            success_message = (
+                "Manual order created and queued for supplier notifications."
+                if not requires_admin_approval
+                else "Manual order created and sent for admin approval."
+            )
+
         if request.htmx:
             response = _with_hx_trigger(
                 HttpResponse(""),
                 "stock-action-success",
-                {
-                    "message": (
-                        "Manual order created and queued for supplier notifications."
-                        if not requires_admin_approval
-                        else "Manual order created and sent for admin approval."
-                    )
-                },
+                {"message": success_message},
             )
             response.headers["X-Skip-HX-Refresh"] = "true"
             return response
-        messages.success(
-            request,
-            "Manual order created and queued for supplier notifications."
-            if not requires_admin_approval
-            else "Manual order created and is waiting for admin approval.",
-        )
+        messages.success(request, success_message)
         return HttpResponse("")
 
     products = list(Product.objects.filter(is_active=True).order_by("name"))
@@ -645,6 +744,9 @@ def manual_order_create_view(request):
     pending_packets_map = _pending_packets_by_product_branch(product_ids)
     branch_scope = list(all_branches) if can_select_branch else ([active_branch] if active_branch else [])
     capacity_by_product_branch = {}
+
+    active_branch_scope = list(Branch.objects.filter(is_active=True))
+    now_local = timezone.localtime(timezone.now())
 
     for product in products:
         product.max_packets_allowed = _max_packets_allowed_for_product(product)
@@ -658,12 +760,19 @@ def manual_order_create_view(request):
             pending_branch_units = pending_packets_for_branch * pack_quantity
             available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
             max_additional_packets = available_units // pack_quantity
-            branch_capacity[str(branch.id)] = {
+            internal_source = _manual_order_internal_supply_source(product, branch, active_branch_scope, now_local)
+            branch_payload = {
                 "max_packets": int(max_additional_packets),
                 "available_units": int(available_units),
                 "current_units": int(current_branch_units),
                 "pending_units": int(pending_branch_units),
             }
+            if internal_source:
+                branch_payload["internal_supply"] = {
+                    "source_branch_id": internal_source.id,
+                    "source_branch_name": internal_source.name,
+                }
+            branch_capacity[str(branch.id)] = branch_payload
 
         capacity_by_product_branch[str(product.id)] = branch_capacity
 
@@ -1171,6 +1280,72 @@ def receive_stock_view(request):
             messages.error(request, "You are not assigned to a branch.")
             return _rows_oob_response(request, changed_products, branch=active_branch) if request.htmx else _redirect_with_branch("stock-list", active_branch)
 
+        branch_source_id = _parse_branch_supplier_value(request.POST.get("supplier_id"))
+        if branch_source_id:
+            try:
+                source_branch = get_object_or_404(Branch, pk=branch_source_id, is_active=True)
+                request_ids = request.POST.getlist("branch_supply_request_id[]")
+                quantities = request.POST.getlist("quantity[]")
+                if not request_ids:
+                    raise ValueError("No pending branch items found or selected to receive.")
+                if len(request_ids) != len(quantities):
+                    raise ValueError("Incomplete branch stock lines were submitted.")
+
+                for req_id, qty in zip(request_ids, quantities):
+                    try:
+                        qty_int = int(qty)
+                    except (TypeError, ValueError):
+                        raise ValueError("Quantity must be a valid whole number.")
+                    if qty_int < 0:
+                        raise ValueError("Quantity cannot be negative.")
+
+                    branch_request = get_object_or_404(
+                        BranchSupplyRequest.objects.select_related("product", "source_branch", "destination_branch"),
+                        pk=req_id,
+                        source_branch=source_branch,
+                        destination_branch=active_branch,
+                        status=BranchSupplyRequest.STATUS_PENDING,
+                    )
+                    if not can_edit_quantity and qty_int != branch_request.requested_quantity:
+                        raise ValueError(
+                            f"QTY (PACKETS) for {branch_request.product.name} can only be edited by super admin."
+                        )
+                    if qty_int > branch_request.requested_quantity:
+                        raise ValueError(
+                            f"Cannot receive more than {branch_request.requested_quantity} packet(s) for {branch_request.product.name}."
+                        )
+                    if qty_int == 0:
+                        branch_request.status = BranchSupplyRequest.STATUS_REJECTED
+                        branch_request.responded_at = timezone.now()
+                        branch_request.save(update_fields=["status", "responded_at", "updated_at"])
+                        continue
+
+                    if qty_int != branch_request.requested_quantity:
+                        branch_request.requested_quantity = qty_int
+                        branch_request.save(update_fields=["requested_quantity", "updated_at"])
+                    ok, message = _approve_branch_supply_request(request, branch_request)
+                    if not ok:
+                        raise ValueError(message)
+                    changed_products.append(branch_request.product)
+
+                if request.htmx:
+                    response = _rows_oob_response(
+                        request,
+                        changed_products,
+                        branch=active_branch,
+                        include_messages=False,
+                    )
+                    return _with_hx_trigger(
+                        response,
+                        "stock-action-success",
+                        {"message": "Branch stock received successfully."},
+                    )
+                messages.success(request, "Branch stock received successfully.")
+                return _redirect_with_branch("stock-list", active_branch)
+            except Exception as exc:
+                messages.error(request, f"Error: {exc}")
+                return _rows_oob_response(request, changed_products, branch=active_branch) if request.htmx else _redirect_with_branch("stock-list", active_branch)
+
         try:
             with transaction.atomic():
                 supplier = get_object_or_404(Supplier, pk=request.POST.get("supplier_id"))
@@ -1430,6 +1605,9 @@ def receive_stock_view(request):
     suppliers = Supplier.objects.all()
     products = Product.objects.filter(is_active=True)
     all_branches = Branch.objects.filter(is_active=True).order_by("name") if can_select_branch else None
+    branch_source_choices = list(_pending_branch_source_choices(None if can_select_branch else active_branch))
+    for branch in branch_source_choices:
+        branch.supplier_value = _branch_supplier_value(branch.id)
     template_name = "products/partials/_receive_form.html" if request.htmx else "products/receive_stock.html"
     return render(
         request,
@@ -1437,6 +1615,7 @@ def receive_stock_view(request):
         {
             "suppliers": suppliers,
             "products": products,
+            "branch_source_choices": branch_source_choices,
             "all_branches": all_branches,
             "active_branch": active_branch,
             "active_branch_id": active_branch.pk if active_branch else "",

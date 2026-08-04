@@ -45,6 +45,9 @@
               {% for s in suppliers %}
               <option value="{{ s.id }}">{{ s.name }}</option>
               {% endfor %}
+              {% for b in branch_source_choices %}
+              <option value="{{ b.supplier_value }}">Branch: {{ b.name }}</option>
+              {% endfor %}
             </select>
           </div>
           <div class="form-group">
