@@ -186,10 +186,14 @@ def _pending_packets_by_product_branch(product_ids):
     if not product_ids:
         return totals
 
-    open_reorders = AutoReorderRequest.objects.filter(
-        status=AutoReorderRequest.STATUS_OPEN,
-        product_id__in=product_ids,
-    ).values_list("product_id", "branch_requirements")
+    open_reorders = (
+        AutoReorderRequest.objects.filter(
+            status=AutoReorderRequest.STATUS_OPEN,
+            product_id__in=product_ids,
+        )
+        .exclude(origin=AutoReorderRequest.ORIGIN_AUTO)
+        .values_list("product_id", "branch_requirements")
+    )
 
     for product_id, branch_requirements in open_reorders:
         if not isinstance(branch_requirements, dict):
