@@ -199,6 +199,14 @@ class Stock(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE)
     quantity = models.IntegerField(default=0)
+    exempt_from_auto_reorder = models.BooleanField(
+        default=False,
+        help_text=(
+            "Set automatically by the auto-reorder scan when this product has not sold "
+            "at this branch for at least the configured stale period. "
+            "Cleared automatically when a sale is recorded at this branch."
+        ),
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
