@@ -253,7 +253,9 @@ class AutoReorderScanTests(TestCase):
 
         unsold_product.refresh_from_db()
         stale_unsold_reorder.refresh_from_db()
-        self.assertTrue(unsold_product.exempt_from_auto_reorder)
+        # Staleness is now tracked per branch on the Stock row, not globally on the product.
+        unsold_stock = Stock.objects.get(product=unsold_product, branch=self.wendani)
+        self.assertTrue(unsold_stock.exempt_from_auto_reorder)
         self.assertEqual(stale_unsold_reorder.status, AutoReorderRequest.STATUS_CANCELLED)
         self.assertIsNotNone(stale_unsold_reorder.completed_at)
         self.assertFalse(
@@ -301,16 +303,21 @@ class AutoReorderScanTests(TestCase):
             pack_quantity=10,
             is_active=True,
         )
+        # Stock rows must exist for the per-branch exempt scan to update them.
+        Stock.objects.create(product=stale_product, branch=self.wendani, quantity=10)
+        Stock.objects.create(product=recent_product, branch=self.wendani, quantity=10)
         self._mark_product_as_sold(stale_product, branch=self.wendani, quantity=1, days_ago=76)
         self._mark_product_as_sold(recent_product, branch=self.wendani, quantity=1, days_ago=74)
 
         scan_low_stock_and_trigger_reorders()
 
-        stale_product.refresh_from_db()
-        recent_product.refresh_from_db()
-        self.assertTrue(stale_product.exempt_from_auto_reorder)
-        self.assertFalse(recent_product.exempt_from_auto_reorder)
+        # Staleness is now per-branch on Stock, not per-product.
+        stale_stock = Stock.objects.get(product=stale_product, branch=self.wendani)
+        recent_stock = Stock.objects.get(product=recent_product, branch=self.wendani)
+        self.assertTrue(stale_stock.exempt_from_auto_reorder)
+        self.assertFalse(recent_stock.exempt_from_auto_reorder)
         notify_delay.assert_not_called()
+
 
     @patch("products.tasks.notify_next_supplier.delay")
     @patch("products.tasks.send_sms_via_leopard")
@@ -346,16 +353,55 @@ class AutoReorderScanTests(TestCase):
         notify_delay.assert_not_called()
 
     @patch("products.tasks.notify_next_supplier.delay")
-    def test_exempt_product_remains_exempt_after_sale_and_scan(self, notify_delay):
+    def test_exempt_branch_stays_exempt_even_when_it_sells(self, notify_delay):
+        """Stock.exempt_from_auto_reorder persists until manually cleared via the UI.
+        A branch that is stale-exempt will not trigger a reorder even if it sells the
+        product yesterday — the flag is only cleared by an admin via the adjust form."""
         product = Product.objects.create(
-            name="Already Exempt Item",
+            name="Persistently Exempt Branch Item",
             barcode="TEST-EXEMPT-STAYS-001",
             unit_price=Decimal("15.00"),
             cost_price=Decimal("8.00"),
             reorder_level=5,
             max_stock=50,
             pack_quantity=10,
-            exempt_from_auto_reorder=True,
+            is_active=True,
+        )
+        # Wendani's stock is stale-exempt (marked by a previous scan cycle).
+        wendani_stock = Stock.objects.create(
+            product=product, branch=self.wendani, quantity=0, exempt_from_auto_reorder=True
+        )
+        # Sukari also stale-exempt — should remain so regardless of what Wendani does.
+        sukari_stock = Stock.objects.create(
+            product=product, branch=self.sukari, quantity=20, exempt_from_auto_reorder=True
+        )
+        # Wendani sells the product yesterday.
+        self._mark_product_as_sold(product, branch=self.wendani, quantity=1, days_ago=1)
+
+        scan_low_stock_and_trigger_reorders()
+
+        wendani_stock.refresh_from_db()
+        sukari_stock.refresh_from_db()
+        # The sale does NOT clear the exempt flag — it persists until manually edited.
+        self.assertTrue(wendani_stock.exempt_from_auto_reorder)
+        self.assertTrue(sukari_stock.exempt_from_auto_reorder)
+        # No reorder created because Wendani is exempt.
+        self.assertFalse(AutoReorderRequest.objects.filter(product=product).exists())
+        notify_delay.assert_not_called()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_manual_product_exempt_blocks_all_branches_regardless_of_sales(self, notify_delay):
+        """Product.exempt_from_auto_reorder is a manual administrator override that
+        suppresses auto-reorder for ALL branches even when the product is selling."""
+        product = Product.objects.create(
+            name="Manually Exempt Product",
+            barcode="TEST-MANUAL-EXEMPT-001",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("8.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            exempt_from_auto_reorder=True,  # manual global override
             is_active=True,
         )
         Stock.objects.create(product=product, branch=self.wendani, quantity=0)
@@ -364,7 +410,9 @@ class AutoReorderScanTests(TestCase):
         scan_low_stock_and_trigger_reorders()
 
         product.refresh_from_db()
+        # The scan must NOT clear the manual product-level exempt flag.
         self.assertTrue(product.exempt_from_auto_reorder)
+        # No reorder should be created.
         self.assertFalse(AutoReorderRequest.objects.filter(product=product).exists())
         notify_delay.assert_not_called()
 
