@@ -13,12 +13,12 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import EmailMessage, send_mail
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Exists, Max, OuterRef, Q
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image, ImageDraw
 
-from .models import AutoReorderRequest, BranchSupplyRequest, Product, Purchase, Supplier, SupplierReorderRequest
+from .models import AutoReorderRequest, BranchSupplyRequest, Product, Purchase, Stock, Supplier, SupplierReorderRequest
 from .sms import normalize_phone_numbers, send_sms_via_leopard
 
 logger = logging.getLogger(__name__)
@@ -577,16 +577,24 @@ def scan_low_stock_and_trigger_reorders():
 
     stale_days = _auto_order_stale_days()
     stale_cutoff = now - timedelta(days=stale_days)
-    stale_product_ids = set(
-        Product.objects.filter(is_active=True, exempt_from_auto_reorder=False)
-        .annotate(last_sale=Max("saleitem__sale__created_at"))
-        .filter(Q(last_sale__lt=stale_cutoff) | Q(last_sale__isnull=True))
-        .values_list("id", flat=True)
-    )
-    if stale_product_ids:
-        Product.objects.filter(id__in=stale_product_ids, is_active=True, exempt_from_auto_reorder=False).update(
-            exempt_from_auto_reorder=True,
-        )
+
+    # ── Per-branch stale exemption ───────────────────────────────────────────
+    # Mark each branch-product Stock row as exempt when that branch has had no
+    # sale of that product in the last stale_days.  A branch-level flag instead
+    # of a product-level flag means other branches that are actively selling
+    # are still evaluated for reorder needs.
+    recent_sale_subquery = SaleItem.objects.filter(
+        product_id=OuterRef("product_id"),
+        sale__branch_id=OuterRef("branch_id"),
+        sale__created_at__gte=stale_cutoff,
+    ).values("id")[:1]
+    Stock.objects.filter(
+        product__is_active=True,
+        branch__is_active=True,
+        exempt_from_auto_reorder=False,
+    ).exclude(
+        Exists(recent_sale_subquery)
+    ).update(exempt_from_auto_reorder=True)
 
     if sold_product_ids:
         cancelled_unsold_count = AutoReorderRequest.objects.filter(
@@ -620,16 +628,26 @@ def scan_low_stock_and_trigger_reorders():
             continue
 
         supplier_branch_requirements = {}
-        stock_by_branch_id = {
-            stock.branch_id: int(stock.quantity or 0)
-            for stock in product.stock_set.filter(branch__is_active=True).only("branch_id", "quantity")
-        }
+        exempt_branch_ids: set[int] = set()
+        stock_by_branch_id: dict[int, int] = {}
+        for stock_row in product.stock_set.filter(branch__is_active=True).only(
+            "branch_id", "quantity", "exempt_from_auto_reorder"
+        ):
+            stock_by_branch_id[stock_row.branch_id] = int(stock_row.quantity or 0)
+            if stock_row.exempt_from_auto_reorder:
+                exempt_branch_ids.add(stock_row.branch_id)
         last_sale_dates = _branch_last_sale_dates(product.id)
         internal_supply_created_for_branches = set()
 
         for branch_id in sorted(sold_branch_ids):
             branch = active_branch_by_id.get(branch_id)
             if not branch:
+                continue
+            if branch_id in exempt_branch_ids:
+                # This branch has been stale for this product; it is not a
+                # demand source even though it sold yesterday (the un-exemption
+                # step above would have cleared it if that sale occurred, so
+                # reaching here means the Stock row is still marked stale).
                 continue
             branch_stock = stock_by_branch_id.get(branch_id, 0)
             if branch_stock > reorder_level:
