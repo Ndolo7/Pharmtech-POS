@@ -19,6 +19,21 @@
           <label>New Quantity *</label>
           {{ form.new_quantity }}
         </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;">
+            <input type="hidden" name="exempt_from_auto_reorder" value="0">
+            <input type="checkbox" name="exempt_from_auto_reorder" value="1"
+              id="exempt-checkbox-{{ product.pk }}"
+              {% if current_exempt %}checked{% endif %}
+              style="width:16px;height:16px;cursor:pointer;"
+              onchange="this.previousElementSibling.value = this.checked ? '1' : '0'">
+            <span style="font-size:13px;font-weight:500;">Exempt from auto-reorder at this branch</span>
+          </label>
+          <p class="text-muted text-sm" style="margin-top:4px;margin-left:24px;">
+            When checked, the auto-reorder scan will skip this product for <strong>{{ active_branch.name }}</strong>.
+            Uncheck to re-enable automatic ordering.
+          </p>
+        </div>
         {% if form.errors %}
         <div class="message message-error">{{ form.errors }}</div>
         {% endif %}
@@ -30,3 +45,4 @@
     </div>
   </div>
 </div>
+

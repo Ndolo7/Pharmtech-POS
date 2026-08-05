@@ -1642,11 +1642,14 @@ def adjust_stock_view(request, pk):
             try:
                 with transaction.atomic():
                     new_qty = form.cleaned_data["new_quantity"]
+                    exempt = request.POST.get("exempt_from_auto_reorder") == "1"
 
-                    stock, _ = Stock.objects.get_or_create(product=product, branch=branch, defaults={"quantity": 0})
+                    stock, created = Stock.objects.get_or_create(product=product, branch=branch, defaults={"quantity": 0})
                     adjustment = new_qty - stock.quantity
                     stock.quantity = new_qty
-                    stock.save(update_fields=["quantity", "updated_at"])
+                    stock.exempt_from_auto_reorder = exempt
+                    update_fields = ["quantity", "exempt_from_auto_reorder", "updated_at"]
+                    stock.save(update_fields=update_fields)
 
                     StockMovement.objects.create(
                         product=product,
@@ -1675,7 +1678,10 @@ def adjust_stock_view(request, pk):
             },
         )
 
+
     form = AdjustStockForm()
+    stock_row = Stock.objects.filter(product=product, branch=branch).first()
+    current_exempt = stock_row.exempt_from_auto_reorder if stock_row else False
     template_name = "products/partials/_adjust_form.html" if request.htmx else "products/adjust_stock.html"
     return render(
         request,
@@ -1684,10 +1690,12 @@ def adjust_stock_view(request, pk):
             "form": form,
             "product": product,
             "current_stock": product.current_stock(branch),
+            "current_exempt": current_exempt,
             "active_branch": branch,
             "active_branch_id": branch.pk if branch else "",
         },
     )
+
 
 
 @login_required
