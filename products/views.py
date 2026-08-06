@@ -574,7 +574,8 @@ def manual_order_create_view(request):
             absolute_max_packets = max_stock_units // pack_quantity
             current_branch_units = max(int(product.current_stock(branch) or 0), 0)
             pending_branch_units = pending_packets_map.get((product_id, branch.name), 0) * pack_quantity
-            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
+            # During manual reorder, pending orders do not restrict the quantity that can be ordered.
+            available_units = max(max_stock_units - current_branch_units, 0)
             requested_units = requested_packets * pack_quantity
 
             if requested_packets > absolute_max_packets:
@@ -758,7 +759,8 @@ def manual_order_create_view(request):
             current_branch_units = max(int(product.current_stock(branch) or 0), 0)
             pending_packets_for_branch = pending_packets_map.get((product.id, branch.name), 0)
             pending_branch_units = pending_packets_for_branch * pack_quantity
-            available_units = max(max_stock_units - current_branch_units - pending_branch_units, 0)
+            # During manual reorder, pending orders do not restrict the available capacity.
+            available_units = max(max_stock_units - current_branch_units, 0)
             max_additional_packets = available_units // pack_quantity
             internal_source = _manual_order_internal_supply_source(product, branch, active_branch_scope, now_local)
             branch_payload = {
