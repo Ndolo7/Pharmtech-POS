@@ -591,8 +591,7 @@ def manual_order_create_view(request):
         active_branch_scope = list(Branch.objects.filter(is_active=True))
         now_local = timezone.localtime(timezone.now())
         internal_supply_lines = []
-        product_branch_requirements = defaultdict(lambda: defaultdict(int))
-        product_packet_totals = defaultdict(int)
+        external_order_lines = []
 
         for (product_id, branch_id), requested_packets in grouped_lines.items():
             product = product_map[product_id]
@@ -602,8 +601,7 @@ def manual_order_create_view(request):
                 internal_supply_lines.append((product, source_branch, branch, requested_packets))
                 continue
 
-            product_branch_requirements[product_id][branch.name] += requested_packets
-            product_packet_totals[product_id] += requested_packets
+            external_order_lines.append((product, branch, requested_packets))
 
         reorder_ids = set()
         internal_supply_count = 0
@@ -631,24 +629,27 @@ def manual_order_create_view(request):
                     branch_requests_to_notify.append(branch_request)
                 internal_supply_count += 1
 
-            for product_id, packets in product_packet_totals.items():
-                product = product_map[product_id]
-                branch_requirements = dict(product_branch_requirements[product_id])
+            for product, branch, packets in external_order_lines:
+                branch_requirements = {branch.name: packets}
                 current_stock = product.current_stock()
-                existing = (
-                    AutoReorderRequest.objects.select_for_update()
-                    .filter(product=product, origin=AutoReorderRequest.ORIGIN_MANUAL, status=AutoReorderRequest.STATUS_OPEN)
-                    .order_by("-created_at")
-                    .first()
+                existing_candidates = AutoReorderRequest.objects.select_for_update().filter(
+                    product=product,
+                    origin=AutoReorderRequest.ORIGIN_MANUAL,
+                    status=AutoReorderRequest.STATUS_OPEN,
                 )
+                existing = None
+                for candidate in existing_candidates:
+                    reqs = candidate.branch_requirements or {}
+                    if isinstance(reqs, dict) and branch.name in reqs:
+                        existing = candidate
+                        break
 
                 if existing:
                     existing_branch_requirements = existing.branch_requirements or {}
                     if not isinstance(existing_branch_requirements, dict):
                         existing_branch_requirements = {}
                     merged_branch_requirements = dict(existing_branch_requirements)
-                    for branch_name, branch_packets in branch_requirements.items():
-                        merged_branch_requirements[branch_name] = _to_non_negative_int(merged_branch_requirements.get(branch_name, 0)) + _to_non_negative_int(branch_packets)
+                    merged_branch_requirements[branch.name] = _to_non_negative_int(merged_branch_requirements.get(branch.name, 0)) + packets
 
                     existing.requested_quantity = _to_non_negative_int(existing.requested_quantity) + packets
                     existing.remaining_quantity = _to_non_negative_int(existing.remaining_quantity) + packets
@@ -793,12 +794,42 @@ def manual_order_create_view(request):
     })
 
 
+def _redirect_to_order_approvals(request):
+    branch_id = (
+        request.POST.get("branch_id")
+        or request.GET.get("branch_id")
+        or request.POST.get("branch")
+        or request.GET.get("branch")
+        or ""
+    ).strip()
+    url = reverse("order-approvals")
+    if branch_id:
+        url = f"{url}?branch={branch_id}"
+    return redirect(url)
+
+
 @login_required
 def manual_order_approval_list_view(request):
     if not request.user.can_approve_manual_orders():
         return HttpResponseForbidden("Permission denied.")
 
-    pending_manual_orders = (
+    selected_branch_id = (
+        request.GET.get("branch")
+        or request.GET.get("branch_id")
+        or request.POST.get("branch_id")
+        or request.POST.get("branch")
+        or ""
+    ).strip()
+
+    all_branches = list(Branch.objects.filter(is_active=True).order_by("name"))
+    selected_branch = None
+    if selected_branch_id:
+        for b in all_branches:
+            if str(b.id) == selected_branch_id:
+                selected_branch = b
+                break
+
+    pending_manual_orders = list(
         AutoReorderRequest.objects.filter(
             origin=AutoReorderRequest.ORIGIN_MANUAL,
             approval_status=AutoReorderRequest.APPROVAL_PENDING,
@@ -806,11 +837,23 @@ def manual_order_approval_list_view(request):
         .select_related("product", "created_by", "approved_by")
         .order_by("-created_at")
     )
-    pending_branch_supply_requests = (
-        BranchSupplyRequest.objects.filter(status=BranchSupplyRequest.STATUS_PENDING)
-        .select_related("product", "source_branch", "destination_branch", "created_by")
-        .order_by("-created_at")
-    )
+    pending_branch_supply_requests = BranchSupplyRequest.objects.filter(status=BranchSupplyRequest.STATUS_PENDING).select_related(
+        "product", "source_branch", "destination_branch", "created_by"
+    ).order_by("-created_at")
+
+    if selected_branch:
+        filtered_orders = []
+        for order in pending_manual_orders:
+            reqs = order.branch_requirements or {}
+            if isinstance(reqs, dict) and selected_branch.name in reqs:
+                filtered_orders.append(order)
+            elif not reqs and order.created_by and order.created_by.branch_id == selected_branch.id:
+                filtered_orders.append(order)
+        pending_manual_orders = filtered_orders
+
+        pending_branch_supply_requests = pending_branch_supply_requests.filter(
+            Q(destination_branch=selected_branch) | Q(source_branch=selected_branch)
+        )
 
     return render(
         request,
@@ -818,6 +861,9 @@ def manual_order_approval_list_view(request):
         {
             "pending_manual_orders": pending_manual_orders,
             "pending_branch_supply_requests": pending_branch_supply_requests,
+            "all_branches": all_branches,
+            "selected_branch": selected_branch,
+            "selected_branch_id": selected_branch_id if selected_branch else "",
         },
     )
 
@@ -856,17 +902,17 @@ def manual_order_bulk_approval_view(request):
     order_ids = request.POST.getlist("order_ids[]")
     if not order_ids:
         messages.info(request, "No manual orders were selected for approval.")
-        return redirect("order-approvals")
+        return _redirect_to_order_approvals(request)
 
     try:
         parsed_order_ids = sorted({int(order_id) for order_id in order_ids if str(order_id).strip()})
     except (TypeError, ValueError):
         messages.error(request, "Invalid manual order selection.")
-        return redirect("order-approvals")
+        return _redirect_to_order_approvals(request)
 
     if not parsed_order_ids:
         messages.info(request, "No manual orders were selected for approval.")
-        return redirect("order-approvals")
+        return _redirect_to_order_approvals(request)
 
     requested_quantities = {}
     for order_id in parsed_order_ids:
@@ -875,11 +921,11 @@ def manual_order_bulk_approval_view(request):
             quantity = int(raw_quantity)
         except (TypeError, ValueError):
             messages.error(request, "Enter a valid whole-number quantity for every manual order.")
-            return redirect("order-approvals")
+            return _redirect_to_order_approvals(request)
 
         if quantity < 0:
             messages.error(request, "Manual order quantities cannot be negative.")
-            return redirect("order-approvals")
+            return _redirect_to_order_approvals(request)
         requested_quantities[order_id] = quantity
 
     now = timezone.now()
@@ -958,7 +1004,7 @@ def manual_order_bulk_approval_view(request):
         )
     else:
         messages.info(request, "No pending manual orders were available to approve.")
-    return redirect("order-approvals")
+    return _redirect_to_order_approvals(request)
 
 
 @login_required
@@ -974,7 +1020,7 @@ def manual_order_approval_action_view(request, pk):
     )
     if order.approval_status != AutoReorderRequest.APPROVAL_PENDING:
         messages.info(request, "That manual order has already been processed.")
-        return redirect("order-approvals")
+        return _redirect_to_order_approvals(request)
 
     action = (request.POST.get("action") or "").strip().lower()
     now = timezone.now()
@@ -995,7 +1041,7 @@ def manual_order_approval_action_view(request, pk):
         messages.success(request, f"Manual order for {order.product.name} rejected.")
     else:
         messages.error(request, "Invalid approval action.")
-    return redirect("order-approvals")
+    return _redirect_to_order_approvals(request)
 
 
 @login_required
@@ -1010,7 +1056,7 @@ def branch_supply_request_action_view(request, pk):
     )
     if branch_request.status != BranchSupplyRequest.STATUS_PENDING:
         messages.info(request, "That branch supply request has already been processed.")
-        return redirect("order-approvals")
+        return _redirect_to_order_approvals(request)
 
     action = (request.POST.get("action") or "").strip().lower()
     if action == "approve":
@@ -1029,7 +1075,7 @@ def branch_supply_request_action_view(request, pk):
         messages.success(request, f"Branch supply request for {branch_request.product.name} rejected.")
     else:
         messages.error(request, "Invalid approval action.")
-    return redirect("order-approvals")
+    return _redirect_to_order_approvals(request)
 
 
 def _can_manage_catalog(user):

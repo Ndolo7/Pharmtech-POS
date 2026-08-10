@@ -18,7 +18,7 @@
         </td>
         <td>{{ branch.code }}</td>
         <td>{{ branch.phone_number }}</td>
-        <td>{{ branch.manager.get_full_name|default:branch.manager.username|default:'-' }}</td>
+        <td>{% if branch.manager %}{{ branch.manager.get_full_name|default:branch.manager.username }}{% else %}-{% endif %}</td>
         <td>
           {% if branch.is_active %}
           <span class="badge badge-success">Active</span>
