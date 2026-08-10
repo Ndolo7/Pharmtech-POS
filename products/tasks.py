@@ -815,10 +815,16 @@ def notify_next_supplier(reorder_request_id: int):
                     responded_at=now,
                     emailed_at=now,
                 )
-                reorder.remaining_quantity = 0
-                reorder.status = AutoReorderRequest.STATUS_FULFILLED
-                reorder.completed_at = now
-                reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
+            else:
+                supplier_request.status = SupplierReorderRequest.STATUS_ACCEPTED
+                supplier_request.fulfilled_quantity = reorder.remaining_quantity
+                supplier_request.responded_at = now
+                supplier_request.save(update_fields=["status", "fulfilled_quantity", "responded_at", "updated_at"])
+
+            reorder.remaining_quantity = 0
+            reorder.status = AutoReorderRequest.STATUS_FULFILLED
+            reorder.completed_at = now
+            reorder.save(update_fields=["remaining_quantity", "status", "completed_at", "updated_at"])
             return {
                 "status": "manual_unregistered_supplier_ready_for_receiving",
                 "supplier_name": unregistered_supplier.name,
