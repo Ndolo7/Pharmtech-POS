@@ -656,7 +656,13 @@ def manual_order_create_view(request):
                     existing.current_stock_snapshot = current_stock
                     existing.target_stock_level = max(int(product.max_stock or 1), 1)
                     existing.branch_requirements = merged_branch_requirements
-                    existing.created_by = existing.created_by or request.user
+                    if supplier_strategy == "unregistered" and unregistered_supplier_name:
+                        existing.unregistered_supplier_name = unregistered_supplier_name
+                        existing.preferred_supplier_ids = []
+                    elif supplier_strategy == "selected" and preferred_supplier_ids:
+                        existing.preferred_supplier_ids = preferred_supplier_ids
+                        existing.unregistered_supplier_name = ""
+
                     if requires_admin_approval:
                         existing.approval_status = AutoReorderRequest.APPROVAL_PENDING
                     elif existing.approval_status not in {AutoReorderRequest.APPROVAL_PENDING, AutoReorderRequest.APPROVAL_REJECTED}:
@@ -670,6 +676,8 @@ def manual_order_create_view(request):
                             "branch_requirements",
                             "created_by",
                             "approval_status",
+                            "unregistered_supplier_name",
+                            "preferred_supplier_ids",
                             "updated_at",
                         ]
                     )
