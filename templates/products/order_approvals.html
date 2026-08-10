@@ -4,10 +4,35 @@
 
 {% block content %}
 <div class="card mb-4">
-  <div class="card-header"><h2>Pending Manual Orders</h2></div>
+  <div class="card-body flex items-center justify-between gap-4 flex-wrap" style="padding: 14px 20px;">
+    <form method="get" action="{% url 'order-approvals' %}" class="flex items-center gap-3">
+      <label for="branch-filter-select" class="font-medium text-sm text-gray-700" style="white-space:nowrap;">Filter by Branch:</label>
+      <select id="branch-filter-select" name="branch" class="form-input" style="width: auto; min-width: 200px;" onchange="this.form.submit()">
+        <option value="" {% if not selected_branch_id %}selected{% endif %}>All Branches</option>
+        {% for b in all_branches %}
+          <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% if selected_branch %}
+      <div class="badge badge-primary text-sm">Showing approvals for: <strong>{{ selected_branch.name }}</strong></div>
+    {% else %}
+      <div class="text-sm text-muted">Showing approvals across <strong>All Branches</strong></div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header flex items-center justify-between">
+    <h2>Pending Manual Orders</h2>
+    {% if selected_branch %}
+      <span class="badge badge-primary">{{ selected_branch.name }}</span>
+    {% endif %}
+  </div>
   <div class="card-body">
     <form method="post" action="{% url 'manual-order-bulk-approval' %}">
       {% csrf_token %}
+      <input type="hidden" name="branch_id" value="{{ selected_branch_id }}">
       <div class="message message-info" style="margin-bottom:12px;max-width:none">
         Edit the packets to approve. Enter 0 for any order you want to disapprove.
       </div>
@@ -28,7 +53,7 @@
               <td class="font-medium">{{ order.product.name }}</td>
               <td>
                 {% for branch_name, qty in order.branch_requirements.items %}
-                  <div>{{ branch_name }}: {{ qty }} packet(s)</div>
+                  <div><span class="badge badge-secondary">{{ branch_name }}: {{ qty }} packet(s)</span></div>
                 {% empty %}
                   <span class="text-muted">-</span>
                 {% endfor %}
@@ -51,7 +76,7 @@
             </tr>
             {% empty %}
             <tr>
-              <td colspan="5"><div class="empty-state">No manual orders are waiting for approval.</div></td>
+              <td colspan="5"><div class="empty-state">No manual orders are waiting for approval{% if selected_branch %} for {{ selected_branch.name }}{% endif %}.</div></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -67,7 +92,12 @@
 </div>
 
 <div class="card">
-  <div class="card-header"><h2>Pending Branch Supply Requests</h2></div>
+  <div class="card-header flex items-center justify-between">
+    <h2>Pending Branch Supply Requests</h2>
+    {% if selected_branch %}
+      <span class="badge badge-primary">{{ selected_branch.name }}</span>
+    {% endif %}
+  </div>
   <div class="card-body">
     <div class="table-wrap">
       <table>
@@ -94,6 +124,7 @@
             <td>
               <form method="post" action="{% url 'branch-supply-request-action' req.id %}" class="flex gap-2">
                 {% csrf_token %}
+                <input type="hidden" name="branch_id" value="{{ selected_branch_id }}">
                 <button type="submit" name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
                 <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger">Reject</button>
               </form>
@@ -101,7 +132,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="7"><div class="empty-state">No branch supply requests are waiting for approval.</div></td>
+            <td colspan="7"><div class="empty-state">No branch supply requests are waiting for approval{% if selected_branch %} for {{ selected_branch.name }}{% endif %}.</div></td>
           </tr>
           {% endfor %}
         </tbody>

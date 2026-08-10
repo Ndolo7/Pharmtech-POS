@@ -1288,9 +1288,16 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get("X-Skip-HX-Refresh"), "true")
         existing_manual.refresh_from_db()
-        self.assertEqual(existing_manual.requested_quantity, 6)
-        self.assertEqual(existing_manual.remaining_quantity, 6)
-        self.assertEqual(existing_manual.branch_requirements, {"Wendani": 4, "Sukari": 2})
+        self.assertEqual(existing_manual.requested_quantity, 4)
+        self.assertEqual(existing_manual.remaining_quantity, 4)
+        self.assertEqual(existing_manual.branch_requirements, {"Wendani": 4})
+
+        branch_b_reorder_p1 = AutoReorderRequest.objects.get(
+            product=self.product_one,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            branch_requirements={"Sukari": 2},
+        )
+        self.assertEqual(branch_b_reorder_p1.requested_quantity, 2)
 
         second_reorder = AutoReorderRequest.objects.get(
             product=self.product_two,
@@ -1300,7 +1307,7 @@ class ManualOrderCreateViewTests(TestCase):
         self.assertEqual(second_reorder.branch_requirements, {"Sukari": 4})
 
         notified_ids = {call.args[0] for call in notify_delay.call_args_list}
-        self.assertEqual(notified_ids, {existing_manual.id, second_reorder.id})
+        self.assertEqual(notified_ids, {existing_manual.id, branch_b_reorder_p1.id, second_reorder.id})
 
     @patch("products.views.notify_next_supplier.delay")
     def test_pharmtec_can_create_manual_order_for_assigned_branch(self, notify_delay):
@@ -1630,6 +1637,91 @@ class ManualOrderCreateViewTests(TestCase):
                 approval_status=AutoReorderRequest.APPROVAL_PENDING,
             ).exists()
         )
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_manual_order_approval_list_view_filters_by_branch(self, notify_delay):
+        order_branch_a = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_a.name: 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        order_branch_b = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=3,
+            remaining_quantity=3,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_b.name: 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        response_all = self.client.get(reverse("order-approvals"))
+        self.assertEqual(response_all.status_code, 200)
+        self.assertContains(response_all, self.branch_a.name)
+        self.assertContains(response_all, self.branch_b.name)
+        self.assertEqual(len(response_all.context["pending_manual_orders"]), 2)
+
+        response_branch_a = self.client.get(reverse("order-approvals"), data={"branch": str(self.branch_a.id)})
+        self.assertEqual(response_branch_a.status_code, 200)
+        self.assertEqual(len(response_branch_a.context["pending_manual_orders"]), 1)
+        self.assertEqual(response_branch_a.context["pending_manual_orders"][0].id, order_branch_a.id)
+
+    @patch("products.views.notify_next_supplier.delay")
+    def test_manual_order_approval_per_branch_allows_independent_approvals(self, notify_delay):
+        order_branch_a = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=5,
+            remaining_quantity=5,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_a.name: 5},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        order_branch_b = AutoReorderRequest.objects.create(
+            product=self.product_one,
+            target_stock_level=100,
+            current_stock_snapshot=0,
+            requested_quantity=3,
+            remaining_quantity=3,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+            created_by=self.admin_user,
+            approval_status=AutoReorderRequest.APPROVAL_PENDING,
+            branch_requirements={self.branch_b.name: 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        response = self.client.post(
+            reverse("manual-order-bulk-approval"),
+            data={
+                "branch_id": str(self.branch_a.id),
+                "order_ids[]": [str(order_branch_a.id)],
+                f"quantity_{order_branch_a.id}": "4",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f"branch={self.branch_a.id}", response.redirect_chain[0][0])
+        order_branch_a.refresh_from_db()
+        order_branch_b.refresh_from_db()
+
+        self.assertEqual(order_branch_a.approval_status, AutoReorderRequest.APPROVAL_APPROVED)
+        self.assertEqual(order_branch_a.requested_quantity, 4)
+        self.assertEqual(order_branch_b.approval_status, AutoReorderRequest.APPROVAL_PENDING)
+        self.assertEqual(order_branch_b.requested_quantity, 3)
 
 
 class ReceiveStockPricingValidationTests(TestCase):
