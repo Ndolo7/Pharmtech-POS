@@ -255,7 +255,7 @@ class AutoReorderScanTests(TestCase):
         stale_unsold_reorder.refresh_from_db()
         # Staleness is now tracked per branch on the Stock row, not globally on the product.
         unsold_stock = Stock.objects.get(product=unsold_product, branch=self.wendani)
-        self.assertTrue(unsold_stock.exempt_from_auto_reorder)
+        self.assertFalse(unsold_stock.exempt_from_auto_reorder)
         self.assertEqual(stale_unsold_reorder.status, AutoReorderRequest.STATUS_CANCELLED)
         self.assertIsNotNone(stale_unsold_reorder.completed_at)
         self.assertFalse(
@@ -317,6 +317,42 @@ class AutoReorderScanTests(TestCase):
         self.assertTrue(stale_stock.exempt_from_auto_reorder)
         self.assertFalse(recent_stock.exempt_from_auto_reorder)
         notify_delay.assert_not_called()
+
+    @patch("products.tasks.notify_next_supplier.delay")
+    def test_scan_does_not_exempt_zero_stock_or_unstocked_products(self, notify_delay):
+        zero_stock_product = Product.objects.create(
+            name="Zero Stock Stale Item",
+            barcode="TEST-ZERO-STOCK-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        positive_stock_product = Product.objects.create(
+            name="Positive Stock Stale Item",
+            barcode="TEST-POS-STOCK-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        Stock.objects.create(product=zero_stock_product, branch=self.wendani, quantity=0)
+        Stock.objects.create(product=positive_stock_product, branch=self.wendani, quantity=10)
+        self._mark_product_as_sold(zero_stock_product, branch=self.wendani, quantity=1, days_ago=80)
+        self._mark_product_as_sold(positive_stock_product, branch=self.wendani, quantity=1, days_ago=80)
+
+        scan_low_stock_and_trigger_reorders()
+
+        zero_stock = Stock.objects.get(product=zero_stock_product, branch=self.wendani)
+        positive_stock = Stock.objects.get(product=positive_stock_product, branch=self.wendani)
+        # Products with zero stock should NOT be auto-exempted
+        self.assertFalse(zero_stock.exempt_from_auto_reorder)
+        # Products in stock (> 0) unsold for 75+ days SHOULD be auto-exempted
+        self.assertTrue(positive_stock.exempt_from_auto_reorder)
 
 
     @patch("products.tasks.notify_next_supplier.delay")

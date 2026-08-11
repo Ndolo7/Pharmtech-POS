@@ -579,10 +579,10 @@ def scan_low_stock_and_trigger_reorders():
     stale_cutoff = now - timedelta(days=stale_days)
 
     # ── Per-branch stale exemption ───────────────────────────────────────────
-    # Mark each branch-product Stock row as exempt when that branch has had no
-    # sale of that product in the last stale_days.  A branch-level flag instead
-    # of a product-level flag means other branches that are actively selling
-    # are still evaluated for reorder needs.
+    # Mark each branch-product Stock row as exempt when that branch currently has
+    # positive stock (quantity > 0) but has had no sale of that product in the last
+    # stale_days. Products with zero stock or that have never been stocked in the branch
+    # are NOT auto-exempted.
     recent_sale_subquery = SaleItem.objects.filter(
         product_id=OuterRef("product_id"),
         sale__branch_id=OuterRef("branch_id"),
@@ -591,6 +591,7 @@ def scan_low_stock_and_trigger_reorders():
     Stock.objects.filter(
         product__is_active=True,
         branch__is_active=True,
+        quantity__gt=0,
         exempt_from_auto_reorder=False,
     ).exclude(
         Exists(recent_sale_subquery)

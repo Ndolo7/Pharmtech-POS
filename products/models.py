@@ -202,9 +202,8 @@ class Stock(models.Model):
     exempt_from_auto_reorder = models.BooleanField(
         default=False,
         help_text=(
-            "Set automatically by the auto-reorder scan when this product has not sold "
-            "at this branch for at least the configured stale period. "
-            "Cleared automatically when a sale is recorded at this branch."
+            "Set automatically by the auto-reorder scan when this product is in stock (quantity > 0) "
+            "and has not sold at this branch for at least the configured stale period."
         ),
     )
     updated_at = models.DateTimeField(auto_now=True)
