@@ -320,8 +320,8 @@ class AutoReorderScanTests(TestCase):
 
     @patch("products.tasks.notify_next_supplier.delay")
     def test_scan_does_not_exempt_zero_stock_or_unstocked_products(self, notify_delay):
-        zero_stock_product = Product.objects.create(
-            name="Zero Stock Stale Item",
+        unstocked_product = Product.objects.create(
+            name="Unstocked Zero Stock Item",
             barcode="TEST-ZERO-STOCK-001",
             unit_price=Decimal("10.00"),
             cost_price=Decimal("5.00"),
@@ -340,19 +340,91 @@ class AutoReorderScanTests(TestCase):
             pack_quantity=10,
             is_active=True,
         )
-        Stock.objects.create(product=zero_stock_product, branch=self.wendani, quantity=0)
-        Stock.objects.create(product=positive_stock_product, branch=self.wendani, quantity=10)
-        self._mark_product_as_sold(zero_stock_product, branch=self.wendani, quantity=1, days_ago=80)
+        # Unstocked item starts at 0 stock
+        unstocked = Stock.objects.create(product=unstocked_product, branch=self.wendani, quantity=0)
+        # Positive stock item sits for 80 days
+        deadstock = Stock.objects.create(product=positive_stock_product, branch=self.wendani, quantity=10)
+        self._mark_product_as_sold(unstocked_product, branch=self.wendani, quantity=1, days_ago=80)
         self._mark_product_as_sold(positive_stock_product, branch=self.wendani, quantity=1, days_ago=80)
 
         scan_low_stock_and_trigger_reorders()
 
-        zero_stock = Stock.objects.get(product=zero_stock_product, branch=self.wendani)
-        positive_stock = Stock.objects.get(product=positive_stock_product, branch=self.wendani)
-        # Products with zero stock should NOT be auto-exempted
-        self.assertFalse(zero_stock.exempt_from_auto_reorder)
-        # Products in stock (> 0) unsold for 75+ days SHOULD be auto-exempted
-        self.assertTrue(positive_stock.exempt_from_auto_reorder)
+        unstocked.refresh_from_db()
+        deadstock.refresh_from_db()
+        # Zero stock item is NOT auto-exempted
+        self.assertFalse(unstocked.exempt_from_auto_reorder)
+        # In-stock deadstock item IS auto-exempted
+        self.assertTrue(deadstock.exempt_from_auto_reorder)
+
+        # Now simulate deadstock being transferred/sold down to 0 stock
+        deadstock.quantity = 0
+        deadstock.save(update_fields=["quantity", "updated_at"])
+
+        scan_low_stock_and_trigger_reorders()
+
+        deadstock.refresh_from_db()
+        # Exemption remains True so deadstock is NOT automatically reordered
+        self.assertTrue(deadstock.exempt_from_auto_reorder)
+
+    def test_migration_fixes_only_never_stocked_zero_quantity_rows(self):
+        import importlib
+        migration_module = importlib.import_module("products.migrations.0021_clear_zero_stock_auto_exemption")
+        fix_wrongly_exempted_unstocked_products = migration_module.fix_wrongly_exempted_unstocked_products
+        from products.models import StockMovement, PurchaseItem, TransferItem
+
+        never_stocked_product = Product.objects.create(
+            name="Never Stocked Item",
+            barcode="MIG-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+        was_stocked_product = Product.objects.create(
+            name="Was Stocked Item",
+            barcode="MIG-002",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            is_active=True,
+        )
+
+        never_stocked_row = Stock.objects.create(product=never_stocked_product, branch=self.wendani, quantity=0, exempt_from_auto_reorder=True)
+        was_stocked_row = Stock.objects.create(product=was_stocked_product, branch=self.wendani, quantity=0, exempt_from_auto_reorder=True)
+
+        # Create historical movement for was_stocked_row
+        StockMovement.objects.create(
+            product=was_stocked_product,
+            branch=self.wendani,
+            movement_type="purchase",
+            quantity=20,
+            created_by=self.cashier,
+        )
+
+        class MockApps:
+            @staticmethod
+            def get_model(app_name, model_name):
+                mapping = {
+                    "Stock": Stock,
+                    "StockMovement": StockMovement,
+                    "PurchaseItem": PurchaseItem,
+                    "TransferItem": TransferItem,
+                }
+                return mapping[model_name]
+
+        fix_wrongly_exempted_unstocked_products(MockApps(), None)
+
+        never_stocked_row.refresh_from_db()
+        was_stocked_row.refresh_from_db()
+
+        # Never stocked item is un-exempted (FIXED)
+        self.assertFalse(never_stocked_row.exempt_from_auto_reorder)
+        # Item that was previously stocked stays exempted (PRESERVED)
+        self.assertTrue(was_stocked_row.exempt_from_auto_reorder)
 
 
     @patch("products.tasks.notify_next_supplier.delay")
