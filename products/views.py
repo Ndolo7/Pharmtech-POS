@@ -213,6 +213,51 @@ def _pending_packets_by_product_branch(product_ids):
     return totals
 
 
+def _receiving_bay_products_by_branch(product_ids):
+    """
+    Return a set of (product_id, branch_name) pairs that are already on the
+    receiving bay — i.e. a supplier has confirmed the order (ACCEPTED / PARTIAL)
+    and the stock has not yet been fully received, OR a pending branch-supply
+    request exists for that product → branch combination.
+    """
+    on_bay = set()
+    if not product_ids:
+        return on_bay
+
+    # Supplier-confirmed orders awaiting physical receipt.
+    supplier_reqs = SupplierReorderRequest.objects.filter(
+        status__in=[
+            SupplierReorderRequest.STATUS_ACCEPTED,
+            SupplierReorderRequest.STATUS_PARTIAL,
+        ],
+        reorder_request__product_id__in=product_ids,
+    ).select_related("reorder_request")
+
+    for sup_req in supplier_reqs:
+        if sup_req.pending_quantity <= 0:
+            continue
+        reorder = sup_req.reorder_request
+        branch_requirements = reorder.branch_requirements or {}
+        if isinstance(branch_requirements, dict) and branch_requirements:
+            for branch_name, qty in branch_requirements.items():
+                if _to_non_negative_int(qty) > 0:
+                    on_bay.add((int(reorder.product_id), str(branch_name)))
+        else:
+            # No branch breakdown — mark the product as on-bay without a branch constraint.
+            on_bay.add((int(reorder.product_id), None))
+
+    # Pending branch-supply requests (dead-stock transfers in transit).
+    branch_supply_reqs = BranchSupplyRequest.objects.filter(
+        status=BranchSupplyRequest.STATUS_PENDING,
+        product_id__in=product_ids,
+    ).select_related("destination_branch")
+
+    for bsr in branch_supply_reqs:
+        on_bay.add((int(bsr.product_id), str(bsr.destination_branch.name)))
+
+    return on_bay
+
+
 def _manual_order_requires_approval(user):
     return getattr(user, "role", "") == "pharmtec" and not user.is_superuser
 
@@ -564,6 +609,21 @@ def manual_order_create_view(request):
             branch = branch_map[branch_id]
             product_branch_requirements[product_id][branch.name] += packets
             product_exempt_choice[product_id] = is_exempt
+
+        # Check receiving bay: block orders for items already confirmed by a supplier
+        # (ACCEPTED / PARTIAL) or pending via a branch-supply request.
+        receiving_bay = _receiving_bay_products_by_branch({line[0] for line in parsed_lines})
+        for (product_id, branch_id), requested_packets in grouped_lines.items():
+            product = product_map[product_id]
+            branch = branch_map[branch_id]
+            if (
+                (product_id, branch.name) in receiving_bay
+                or (product_id, None) in receiving_bay
+            ):
+                return HttpResponseBadRequest(
+                    f"{product.name} is already on the receiving bay for {branch.name}. "
+                    "Please receive the existing order before placing a new one."
+                )
 
         # Validate each line against the branch headroom and absolute packet cap.
         for (product_id, branch_id), requested_packets in grouped_lines.items():
