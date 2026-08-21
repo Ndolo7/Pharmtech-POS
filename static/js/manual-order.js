@@ -195,10 +195,7 @@
         const selectedOption = productSelect?.selectedOptions?.[0] || null;
         const productId = productSelect?.value || "";
         const branchCapacity = (capacityData[productId] && capacityData[productId][branchId]) ? capacityData[productId][branchId] : null;
-        const absoluteMaxPackets = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-packets")) : null;
         const packQty = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-pack-qty")) : null;
-        const maxStock = selectedOption ? parseIntSafe(selectedOption.getAttribute("data-max-stock")) : null;
-        const availableUnits = branchCapacity ? parseIntSafe(branchCapacity.available_units) : null;
         const currentUnits = branchCapacity ? parseIntSafe(branchCapacity.current_units) : null;
         const pendingUnits = branchCapacity ? parseIntSafe(branchCapacity.pending_units) : null;
         const internalSupply = branchCapacity && branchCapacity.internal_supply ? branchCapacity.internal_supply : null;
@@ -226,20 +223,11 @@
           if (!packets || packets <= 0) {
             rowValid = false;
             errorText = "Packets must be a positive whole number.";
-          } else if (absoluteMaxPackets !== null && packets > absoluteMaxPackets) {
-            rowValid = false;
-            errorText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
           }
         }
 
-        if (packetsInput && absoluteMaxPackets !== null) {
-          packetsInput.max = String(absoluteMaxPackets);
-        }
-
-        if (branchCapacity && packQty && maxStock !== null && availableUnits !== null && currentUnits !== null && pendingUnits !== null) {
-          helperText = `Needed: ${branchCapacity.max_packets} packets (${availableUnits} units) | Available: ${currentUnits} units | Pending orders: ${pendingUnits} units | Max stock: ${maxStock} | Pack size: ${packQty}.`;
-        } else if (absoluteMaxPackets !== null && packQty && maxStock) {
-          helperText = `Max ${absoluteMaxPackets} packet(s) allowed.`;
+        if (branchCapacity && packQty && currentUnits !== null && pendingUnits !== null) {
+          helperText = "Available: " + currentUnits + " units | Pending orders: " + pendingUnits + " units | Pack size: " + packQty + ".";
         }
 
         if (internalSupply && internalSupply.source_branch_name) {
