@@ -6,7 +6,6 @@ from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from datetime import timedelta
 from io import BytesIO
-from math import ceil
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -163,12 +162,6 @@ def _used_supplier_link_message(supplier_request):
     if supplier_request.status == SupplierReorderRequest.STATUS_EMAIL_FAILED:
         return "error", "This request failed to send correctly. Please contact our procurement team."
     return "info", "This confirmation link is no longer active."
-
-
-def _max_packets_allowed_for_product(product):
-    pack_quantity = max(int(product.pack_quantity or 1), 1)
-    max_stock_units = max(int(product.max_stock or 1), 1)
-    return max(int(ceil(max_stock_units / float(pack_quantity))), 1)
 
 
 def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
@@ -597,7 +590,6 @@ def manual_order_create_view(request):
         else:
             branch_map = {active_branch.id: active_branch}
 
-        pending_packets_map = _pending_packets_by_product_branch({line[0] for line in parsed_lines})
         grouped_lines = defaultdict(int)
         product_branch_requirements = defaultdict(lambda: defaultdict(int))
         product_packet_totals = defaultdict(int)
@@ -623,29 +615,6 @@ def manual_order_create_view(request):
                 return HttpResponseBadRequest(
                     f"{product.name} is already on the receiving bay for {branch.name}. "
                     "Please receive the existing order before placing a new one."
-                )
-
-        # Validate each line against the branch headroom and absolute packet cap.
-        for (product_id, branch_id), requested_packets in grouped_lines.items():
-            product = product_map[product_id]
-            branch = branch_map[branch_id]
-            pack_quantity = max(int(product.pack_quantity or 1), 1)
-            max_stock_units = max(int(product.max_stock or 1), 1)
-            absolute_max_packets = max_stock_units // pack_quantity
-            current_branch_units = max(int(product.current_stock(branch) or 0), 0)
-            pending_branch_units = pending_packets_map.get((product_id, branch.name), 0) * pack_quantity
-            # During manual reorder, pending orders do not restrict the quantity that can be ordered.
-            available_units = max(max_stock_units - current_branch_units, 0)
-            requested_units = requested_packets * pack_quantity
-
-            if requested_packets > absolute_max_packets:
-                return HttpResponseBadRequest(
-                    f"{product.name} can only be ordered in up to {absolute_max_packets} packet(s) "
-                    f"(max stock: {max_stock_units} units, pack size: {pack_quantity} units/packet)."
-                )
-            if requested_units > available_units:
-                return HttpResponseBadRequest(
-                    f"{product.name} can only accept up to {available_units // pack_quantity} packet(s) for {branch.name}."
                 )
 
         active_branch_scope = list(Branch.objects.filter(is_active=True))
@@ -819,22 +788,15 @@ def manual_order_create_view(request):
     now_local = timezone.localtime(timezone.now())
 
     for product in products:
-        product.max_packets_allowed = _max_packets_allowed_for_product(product)
         pack_quantity = max(int(product.pack_quantity or 1), 1)
-        max_stock_units = max(int(product.max_stock or 1), 1)
         branch_capacity = {}
 
         for branch in branch_scope:
             current_branch_units = max(int(product.current_stock(branch) or 0), 0)
             pending_packets_for_branch = pending_packets_map.get((product.id, branch.name), 0)
             pending_branch_units = pending_packets_for_branch * pack_quantity
-            # During manual reorder, pending orders do not restrict the available capacity.
-            available_units = max(max_stock_units - current_branch_units, 0)
-            max_additional_packets = available_units // pack_quantity
             internal_source = _manual_order_internal_supply_source(product, branch, active_branch_scope, now_local)
             branch_payload = {
-                "max_packets": int(max_additional_packets),
-                "available_units": int(available_units),
                 "current_units": int(current_branch_units),
                 "pending_units": int(pending_branch_units),
             }

@@ -1449,20 +1449,25 @@ class ManualOrderCreateViewTests(TestCase):
         notify_delay.assert_not_called()
 
     @patch("products.views.notify_next_supplier.delay")
-    def test_create_order_rejects_packets_above_product_max(self, notify_delay):
+    def test_create_order_allows_packets_above_product_max(self, notify_delay):
         response = self.client.post(
             reverse("create-order"),
             data={
                 "product_id[]": [str(self.product_two.id)],
                 "branch_id[]": [str(self.branch_a.id)],
-                "packets[]": ["7"],  # Product Two max packets is ceil(60/10) = 6
+                "packets[]": ["7"],
             },
             HTTP_HX_REQUEST="true",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(AutoReorderRequest.objects.filter(origin=AutoReorderRequest.ORIGIN_MANUAL).count(), 0)
-        notify_delay.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        manual_reorder = AutoReorderRequest.objects.get(
+            product=self.product_two,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+        )
+        self.assertEqual(manual_reorder.requested_quantity, 7)
+        self.assertEqual(manual_reorder.branch_requirements, {self.branch_a.name: 7})
+        notify_delay.assert_called_once_with(manual_reorder.id)
 
     @patch("products.views._send_branch_supply_request_sms")
     @patch("products.views.notify_next_supplier.delay")
@@ -1591,7 +1596,7 @@ class ManualOrderCreateViewTests(TestCase):
         notify_delay.assert_called_once_with(manual_reorder.id)
 
     @patch("products.views.notify_next_supplier.delay")
-    def test_create_order_rejects_when_projected_stock_exceeds_max(self, notify_delay):
+    def test_create_order_allows_projected_stock_to_exceed_max(self, notify_delay):
         Stock.objects.create(product=self.product_limited, branch=self.branch_a, quantity=3)
 
         response = self.client.post(
@@ -1604,9 +1609,14 @@ class ManualOrderCreateViewTests(TestCase):
             HTTP_HX_REQUEST="true",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "can only accept", status_code=400)
-        notify_delay.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        manual_reorder = AutoReorderRequest.objects.get(
+            product=self.product_limited,
+            origin=AutoReorderRequest.ORIGIN_MANUAL,
+        )
+        self.assertEqual(manual_reorder.requested_quantity, 4)
+        self.assertEqual(manual_reorder.branch_requirements, {self.branch_a.name: 4})
+        notify_delay.assert_called_once_with(manual_reorder.id)
 
     @patch("products.views.notify_next_supplier.delay")
     def test_create_order_unregistered_supplier_is_created_immediately(self, notify_delay):
