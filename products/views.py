@@ -403,10 +403,14 @@ def _approve_branch_supply_request(request, branch_supply_request):
             ]
         )
 
-        product = locked_request.product
-        if not product.exempt_from_auto_reorder:
-            product.exempt_from_auto_reorder = True
-            product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+        source_stock, _ = Stock.objects.get_or_create(
+            product=locked_request.product,
+            branch=locked_request.source_branch,
+            defaults={"quantity": 0},
+        )
+        if not source_stock.exempt_from_auto_reorder:
+            source_stock.exempt_from_auto_reorder = True
+            source_stock.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
 
     return True, f"Branch supply approved and stock transferred from {branch_supply_request.source_branch.name}."
 
@@ -573,7 +577,7 @@ def manual_order_create_view(request):
             except (TypeError, ValueError):
                 return HttpResponseBadRequest(f"Invalid product/branch values on line {index}.")
 
-            is_exempt = exempt_raw == "1"
+            is_exempt = exempt_raw in ("1", "true", "on")
             parsed_lines.append((product_id, branch_id, packets, is_exempt))
 
         if not parsed_lines:
@@ -638,12 +642,16 @@ def manual_order_create_view(request):
         unregistered_supplier = _get_or_create_unregistered_supplier(unregistered_supplier_name) if supplier_strategy == "unregistered" else None
 
         with transaction.atomic():
-            # Update product exemption status
-            for product_id, is_exempt in product_exempt_choice.items():
-                product = product_map[product_id]
-                if product.exempt_from_auto_reorder != is_exempt:
-                    product.exempt_from_auto_reorder = is_exempt
-                    product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+            # Update branch stock exemption status
+            for product_id, branch_id, packets, is_exempt in parsed_lines:
+                stock_obj, _ = Stock.objects.get_or_create(
+                    product_id=product_id,
+                    branch_id=branch_id,
+                    defaults={"quantity": 0},
+                )
+                if stock_obj.exempt_from_auto_reorder != is_exempt:
+                    stock_obj.exempt_from_auto_reorder = is_exempt
+                    stock_obj.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
 
             for product, source_branch, destination_branch, requested_packets in internal_supply_lines:
                 branch_request, should_notify_branch = _upsert_branch_supply_request(
@@ -1275,20 +1283,39 @@ def product_create_view(request):
     if request.method == "POST":
         form = ProductForm(request.POST)
         if form.is_valid():
-            form.save()
+            product = form.save(commit=False)
+            product.exempt_from_auto_reorder = False
+            product.save()
+
+            if active_branch:
+                exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
+                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0})
+                stock.exempt_from_auto_reorder = exempt_val
+                stock.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+
             messages.success(request, "Product created successfully.")
             return _render_product_table(request, branch=active_branch)
         return render(
             request,
             "products/partials/_product_form.html",
-            {"form": form, "active_branch_id": active_branch.pk if active_branch else ""},
+            {
+                "form": form,
+                "current_exempt": request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on"),
+                "active_branch": active_branch,
+                "active_branch_id": active_branch.pk if active_branch else "",
+            },
         )
 
     form = ProductForm()
     return render(
         request,
         "products/partials/_product_form.html",
-        {"form": form, "active_branch_id": active_branch.pk if active_branch else ""},
+        {
+            "form": form,
+            "current_exempt": False,
+            "active_branch": active_branch,
+            "active_branch_id": active_branch.pk if active_branch else "",
+        },
     )
 
 
@@ -1300,22 +1327,50 @@ def product_edit_view(request, pk):
 
     active_branch = _resolve_products_branch(request)
     product = get_object_or_404(Product, pk=pk)
+
+    stock_row = Stock.objects.filter(product=product, branch=active_branch).first() if active_branch else None
+    current_exempt = stock_row.exempt_from_auto_reorder if stock_row else False
+
     if request.method == "POST":
         form = ProductForm(request.POST, instance=product)
         if form.is_valid():
-            form.save()
+            saved_product = form.save(commit=False)
+            saved_product.exempt_from_auto_reorder = False
+            saved_product.save()
+
+            if active_branch:
+                exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
+                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0})
+                stock.exempt_from_auto_reorder = exempt_val
+                stock.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+
             messages.success(request, "Product updated.")
             return _render_product_table(request, branch=active_branch)
         return render(
             request,
             "products/partials/_product_form.html",
-            {"form": form, "product": product, "active_branch_id": active_branch.pk if active_branch else ""},
+            {
+                "form": form,
+                "product": product,
+                "current_exempt": request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on"),
+                "active_branch": active_branch,
+                "active_branch_id": active_branch.pk if active_branch else "",
+            },
         )
     form = ProductForm(instance=product)
+    form.initial["exempt_from_auto_reorder"] = current_exempt
+    if "exempt_from_auto_reorder" in form.fields:
+        form.fields["exempt_from_auto_reorder"].initial = current_exempt
     return render(
         request,
         "products/partials/_product_form.html",
-        {"form": form, "product": product, "active_branch_id": active_branch.pk if active_branch else ""},
+        {
+            "form": form,
+            "product": product,
+            "current_exempt": current_exempt,
+            "active_branch": active_branch,
+            "active_branch_id": active_branch.pk if active_branch else "",
+        },
     )
 
 
@@ -1720,7 +1775,7 @@ def adjust_stock_view(request, pk):
             try:
                 with transaction.atomic():
                     new_qty = form.cleaned_data["new_quantity"]
-                    exempt = request.POST.get("exempt_from_auto_reorder") == "1"
+                    exempt = request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
 
                     stock, created = Stock.objects.get_or_create(product=product, branch=branch, defaults={"quantity": 0})
                     adjustment = new_qty - stock.quantity
@@ -1728,6 +1783,10 @@ def adjust_stock_view(request, pk):
                     stock.exempt_from_auto_reorder = exempt
                     update_fields = ["quantity", "exempt_from_auto_reorder", "updated_at"]
                     stock.save(update_fields=update_fields)
+
+                    if not exempt and product.exempt_from_auto_reorder:
+                        product.exempt_from_auto_reorder = False
+                        product.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
 
                     StockMovement.objects.create(
                         product=product,
@@ -1751,6 +1810,7 @@ def adjust_stock_view(request, pk):
                 "form": form,
                 "product": product,
                 "current_stock": product.current_stock(branch),
+                "current_exempt": request.POST.get("exempt_from_auto_reorder") == "1",
                 "active_branch": branch,
                 "active_branch_id": branch.pk if branch else "",
             },
