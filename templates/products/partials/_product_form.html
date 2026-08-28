@@ -56,7 +56,7 @@
         </div>
         <div class="form-group" style="display:flex;align-items:center;gap:8px;">
           {{ form.exempt_from_auto_reorder }}
-          <label style="margin:0;">Exempt from auto reorder</label>
+          <label style="margin:0;">Exempt from auto-reorder{% if active_branch %} at {{ active_branch.name }}{% endif %}</label>
         </div>
         {% if form.errors %}
           <div class="message message-error">{{ form.errors }}</div>
