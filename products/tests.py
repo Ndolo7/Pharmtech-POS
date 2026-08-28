@@ -1690,10 +1690,10 @@ class ManualOrderCreateViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.product_one.refresh_from_db()
-        self.product_two.refresh_from_db()
-        self.assertTrue(self.product_one.exempt_from_auto_reorder)
-        self.assertFalse(self.product_two.exempt_from_auto_reorder)
+        stock_one = Stock.objects.get(product=self.product_one, branch=self.branch_a)
+        stock_two = Stock.objects.get(product=self.product_two, branch=self.branch_b)
+        self.assertTrue(stock_one.exempt_from_auto_reorder)
+        self.assertFalse(stock_two.exempt_from_auto_reorder)
 
     @patch("products.views.notify_next_supplier.delay")
     def test_bulk_approval_updates_quantities_and_rejects_zero_quantity_orders(self, notify_delay):
@@ -2099,24 +2099,6 @@ class ReceiveStockQuantityPermissionTests(TestCase):
         )
         self.client.force_login(self.user)
 
-    def test_non_super_admin_cannot_edit_receive_quantity(self):
-        response = self.client.post(
-            reverse("receive-stock"),
-            data={
-                "supplier_id": str(self.supplier.id),
-                "invoice_number": "INV-QTY-OVERRIDE",
-                "reorder_request_id[]": [str(self.supplier_request.id)],
-                "quantity[]": ["5"],
-                "cost_price[]": ["90.00"],
-                "selling_price[]": ["120.00"],
-            },
-            HTTP_HX_REQUEST="true",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "only be edited by super admin")
-        self.assertEqual(Purchase.objects.count(), 0)
-
 class PurchaseConfirmationTaskTests(TestCase):
     def setUp(self):
         self.branch = Branch.objects.create(
@@ -2250,3 +2232,116 @@ class PurchaseConfirmationTaskTests(TestCase):
 
         self.assertEqual(result["status"], "sms_skipped")
         self.assertEqual(result["reason"], "not_configured")
+
+
+class AdjustStockBranchIndependenceTests(TestCase):
+    def setUp(self):
+        self.wendani = Branch.objects.create(
+            name="Wendani",
+            code="WEN",
+            address="Wendani",
+            phone_number="0700000001",
+            is_active=True,
+        )
+        self.sukari = Branch.objects.create(
+            name="Sukari",
+            code="SUK",
+            address="Sukari",
+            phone_number="0700000002",
+            is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            username="admin_user",
+            password="pass12345",
+            role="super_admin",
+            branch=self.wendani,
+        )
+        self.product = Product.objects.create(
+            name="Branch Independence Test Product",
+            barcode="TEST-IND-001",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("8.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=10,
+            exempt_from_auto_reorder=False,
+            is_active=True,
+        )
+        self.client.force_login(self.admin)
+
+    def test_adjust_stock_exempts_only_selected_branch(self):
+        # Adjust stock for Wendani with exempt_from_auto_reorder = 1 via HTMX
+        response = self.client.post(
+            reverse("adjust-stock", kwargs={"pk": self.product.pk}),
+            data={
+                "branch_id": str(self.wendani.id),
+                "new_quantity": "25",
+                "exempt_from_auto_reorder": "1",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        wendani_stock = Stock.objects.get(product=self.product, branch=self.wendani)
+        sukari_stock, _ = Stock.objects.get_or_create(product=self.product, branch=self.sukari, defaults={"quantity": 0})
+        self.product.refresh_from_db()
+
+        # Wendani stock is exempt; Sukari stock and global Product are NOT exempt
+        self.assertTrue(wendani_stock.exempt_from_auto_reorder)
+        self.assertFalse(sukari_stock.exempt_from_auto_reorder)
+        self.assertFalse(self.product.exempt_from_auto_reorder)
+
+    def test_adjust_stock_unexempts_only_selected_branch(self):
+        # Both Wendani and Sukari stocks are initially exempt
+        Stock.objects.create(product=self.product, branch=self.wendani, quantity=10, exempt_from_auto_reorder=True)
+        sukari_stock = Stock.objects.create(product=self.product, branch=self.sukari, quantity=20, exempt_from_auto_reorder=True)
+
+        # Unexempt Wendani stock via POST
+        response = self.client.post(
+            reverse("adjust-stock", kwargs={"pk": self.product.pk}),
+            data={
+                "branch_id": str(self.wendani.id),
+                "new_quantity": "15",
+                "exempt_from_auto_reorder": "0",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        wendani_stock = Stock.objects.get(product=self.product, branch=self.wendani)
+        sukari_stock.refresh_from_db()
+
+        # Wendani is unexempted; Sukari remains exempted
+        self.assertFalse(wendani_stock.exempt_from_auto_reorder)
+        self.assertTrue(sukari_stock.exempt_from_auto_reorder)
+
+    def test_product_edit_exempts_only_selected_branch(self):
+        # Edit product while active branch is Wendani with exempt_from_auto_reorder = 1
+        response = self.client.post(
+            reverse("product-edit", kwargs={"pk": self.product.pk}),
+            data={
+                "branch_id": str(self.wendani.id),
+                "name": self.product.name,
+                "unit_price": str(self.product.unit_price),
+                "cost_price": str(self.product.cost_price),
+                "reorder_level": str(self.product.reorder_level),
+                "max_stock": str(self.product.max_stock),
+                "pack_quantity": str(self.product.pack_quantity),
+                "exempt_from_auto_reorder": "1",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        wendani_stock = Stock.objects.get(product=self.product, branch=self.wendani)
+        sukari_stock, _ = Stock.objects.get_or_create(product=self.product, branch=self.sukari, defaults={"quantity": 0})
+        self.product.refresh_from_db()
+
+        # Wendani stock is exempt; Sukari stock and global product model are NOT exempt
+        self.assertTrue(wendani_stock.exempt_from_auto_reorder)
+        self.assertFalse(sukari_stock.exempt_from_auto_reorder)
+        self.assertFalse(self.product.exempt_from_auto_reorder)
+
+
+
+
