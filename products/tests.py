@@ -2343,5 +2343,93 @@ class AdjustStockBranchIndependenceTests(TestCase):
         self.assertFalse(self.product.exempt_from_auto_reorder)
 
 
+class ZeroMovementExemptCommandTests(TestCase):
+    def setUp(self):
+        self.wendani = Branch.objects.create(
+            name="Wendani",
+            code="WEN-EX",
+            address="Wendani",
+            phone_number="0700000001",
+            is_active=True,
+        )
+        self.sukari = Branch.objects.create(
+            name="Sukari",
+            code="SUK-EX",
+            address="Sukari",
+            phone_number="0700000002",
+            is_active=True,
+        )
+        self.user = User.objects.create_user(
+            username="ex_admin",
+            password="pass12345",
+            role="super_admin",
+            branch=self.wendani,
+        )
+        # Product 1: Zero movements in both branches
+        self.product_zero_mov = Product.objects.create(
+            name="Zero Movement Prod",
+            barcode="EX-ZERO-001",
+            unit_price=Decimal("100.00"),
+            cost_price=Decimal("70.00"),
+            is_active=True,
+        )
+        # Product 2: Movement in Wendani, zero in Sukari
+        self.product_mixed_mov = Product.objects.create(
+            name="Mixed Movement Prod",
+            barcode="EX-MIX-001",
+            unit_price=Decimal("50.00"),
+            cost_price=Decimal("30.00"),
+            is_active=True,
+        )
+        StockMovement.objects.create(
+            product=self.product_mixed_mov,
+            branch=self.wendani,
+            movement_type="purchase",
+            quantity=10,
+            created_by=self.user,
+        )
 
+    def test_exempt_zero_movement_command_exempts_zero_movement_stocks(self):
+        from io import StringIO
+        from django.core.management import call_command
 
+        out = StringIO()
+        call_command("exempt_zero_movement_stock", stdout=out)
+        output = out.getvalue()
+
+        self.assertIn("SUMMARY", output)
+        zero_wendani = Stock.objects.get(product=self.product_zero_mov, branch=self.wendani)
+        zero_sukari = Stock.objects.get(product=self.product_zero_mov, branch=self.sukari)
+        mixed_wendani = Stock.objects.get(product=self.product_mixed_mov, branch=self.wendani)
+        mixed_sukari = Stock.objects.get(product=self.product_mixed_mov, branch=self.sukari)
+
+        # Zero movement product exempted in both branches
+        self.assertTrue(zero_wendani.exempt_from_auto_reorder)
+        self.assertTrue(zero_sukari.exempt_from_auto_reorder)
+
+        # Mixed movement product exempted in Sukari (0 movements), NOT in Wendani (has movements)
+        self.assertFalse(mixed_wendani.exempt_from_auto_reorder)
+        self.assertTrue(mixed_sukari.exempt_from_auto_reorder)
+
+    def test_exempt_zero_movement_command_dry_run(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("exempt_zero_movement_stock", dry_run=True, stdout=out)
+        output = out.getvalue()
+
+        self.assertIn("DRY-RUN", output)
+        # In dry run mode, stock rows should not be saved or created in DB
+        self.assertFalse(Stock.objects.filter(product=self.product_zero_mov).exists())
+
+    def test_exempt_zero_movement_command_branch_filter(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("exempt_zero_movement_stock", branch="Wendani", stdout=out)
+
+        # Only Wendani stock created/updated
+        self.assertTrue(Stock.objects.filter(product=self.product_zero_mov, branch=self.wendani).exists())
+        self.assertFalse(Stock.objects.filter(product=self.product_zero_mov, branch=self.sukari).exists())
