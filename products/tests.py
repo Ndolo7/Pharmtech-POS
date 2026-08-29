@@ -19,6 +19,7 @@ from products.models import (
     PurchaseItem,
     Product,
     Stock,
+    StockMovement,
     Supplier,
     SupplierReorderRequest,
 )
