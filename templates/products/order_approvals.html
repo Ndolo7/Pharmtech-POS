@@ -12,7 +12,7 @@
         onchange="this.form.submit()">
         <option value="" {% if not selected_branch_id %}selected{% endif %}>All Branches</option>
         {% for b in all_branches %}
-        <option value="{{ b.id }}" {% if selected_branch_id==b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}
+        <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}
         </option>
         {% endfor %}
       </select>
@@ -98,54 +98,4 @@
   </div>
 </div>
 
-<!-- Dead-stock inter-branch supply requests removed. All inter-branch supply requests are now auto-approved immediately upon creation. -->
-<!-- <div class="card">
-  <div class="card-header flex items-center justify-between">
-    <h2>Pending Branch Supply Requests</h2>
-    {% if selected_branch %}
-      <span class="badge badge-primary">{{ selected_branch.name }}</span>
-    {% endif %}
-  </div>
-  <div class="card-body">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>Source Branch</th>
-            <th>Destination Branch</th>
-            <th>Qty</th>
-            <th>Created By</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for req in pending_branch_supply_requests %}
-          <tr>
-            <td class="font-medium">{{ req.product.name }}</td>
-            <td>{{ req.source_branch.name }}</td>
-            <td>{{ req.destination_branch.name }}</td>
-            <td>{{ req.requested_quantity }}</td>
-            <td>{% if req.created_by %}{{ req.created_by.get_full_name|default:req.created_by.username }}{% else %}System{% endif %}</td>
-            <td>{{ req.created_at|date:"Y-m-d H:i" }}</td>
-            <td>
-              <form method="post" action="{% url 'branch-supply-request-action' req.id %}" class="flex gap-2">
-                {% csrf_token %}
-                <input type="hidden" name="branch_id" value="{{ selected_branch_id }}">
-                <button type="submit" name="action" value="approve" class="btn btn-sm btn-primary">Approve</button>
-                <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger">Reject</button>
-              </form>
-            </td>
-          </tr>
-          {% empty %}
-          <tr>
-            <td colspan="7"><div class="empty-state">No branch supply requests are waiting for approval{% if selected_branch %} for {{ selected_branch.name }}{% endif %}.</div></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div> -->
 {% endblock %}
