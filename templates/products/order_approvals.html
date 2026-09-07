@@ -6,18 +6,21 @@
 <div class="card mb-4">
   <div class="card-body flex items-center justify-between gap-4 flex-wrap" style="padding: 14px 20px;">
     <form method="get" action="{% url 'order-approvals' %}" class="flex items-center gap-3">
-      <label for="branch-filter-select" class="font-medium text-sm text-gray-700" style="white-space:nowrap;">Filter by Branch:</label>
-      <select id="branch-filter-select" name="branch" class="form-input" style="width: auto; min-width: 200px;" onchange="this.form.submit()">
+      <label for="branch-filter-select" class="font-medium text-sm text-gray-700" style="white-space:nowrap;">Filter by
+        Branch:</label>
+      <select id="branch-filter-select" name="branch" class="form-input" style="width: auto; min-width: 200px;"
+        onchange="this.form.submit()">
         <option value="" {% if not selected_branch_id %}selected{% endif %}>All Branches</option>
         {% for b in all_branches %}
-          <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+        <option value="{{ b.id }}" {% if selected_branch_id==b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}
+        </option>
         {% endfor %}
       </select>
     </form>
     {% if selected_branch %}
-      <div class="badge badge-primary text-sm">Showing approvals for: <strong>{{ selected_branch.name }}</strong></div>
+    <div class="badge badge-primary text-sm">Showing approvals for: <strong>{{ selected_branch.name }}</strong></div>
     {% else %}
-      <div class="text-sm text-muted">Showing approvals across <strong>All Branches</strong></div>
+    <div class="text-sm text-muted">Showing approvals across <strong>All Branches</strong></div>
     {% endif %}
   </div>
 </div>
@@ -26,7 +29,7 @@
   <div class="card-header flex items-center justify-between">
     <h2>Pending Manual Orders</h2>
     {% if selected_branch %}
-      <span class="badge badge-primary">{{ selected_branch.name }}</span>
+    <span class="badge badge-primary">{{ selected_branch.name }}</span>
     {% endif %}
   </div>
   <div class="card-body">
@@ -53,9 +56,9 @@
               <td class="font-medium">{{ order.product.name }}</td>
               <td>
                 {% for branch_name, qty in order.branch_requirements.items %}
-                  <div><span class="badge badge-secondary">{{ branch_name }}: {{ qty }} packet(s)</span></div>
+                <div><span class="badge badge-secondary">{{ branch_name }}: {{ qty }} packet(s)</span></div>
                 {% empty %}
-                  <span class="text-muted">-</span>
+                <span class="text-muted">-</span>
                 {% endfor %}
               </td>
               <td style="min-width:120px;">
@@ -71,12 +74,16 @@
                   required
                 >
               </td>
-              <td>{% if order.created_by %}{{ order.created_by.get_full_name|default:order.created_by.username }}{% else %}-{% endif %}</td>
+              <td>{% if order.created_by %}{{ order.created_by.get_full_name|default:order.created_by.username }}{% else
+                %}-{% endif %}</td>
               <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
             </tr>
             {% empty %}
             <tr>
-              <td colspan="5"><div class="empty-state">No manual orders are waiting for approval{% if selected_branch %} for {{ selected_branch.name }}{% endif %}.</div></td>
+              <td colspan="5">
+                <div class="empty-state">No manual orders are waiting for approval{% if selected_branch %} for {{
+                  selected_branch.name }}{% endif %}.</div>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -91,7 +98,8 @@
   </div>
 </div>
 
-<div class="card">
+<!-- Dead-stock inter-branch supply requests removed. All inter-branch supply requests are now auto-approved immediately upon creation. -->
+<!-- <div class="card">
   <div class="card-header flex items-center justify-between">
     <h2>Pending Branch Supply Requests</h2>
     {% if selected_branch %}
@@ -139,5 +147,5 @@
       </table>
     </div>
   </div>
-</div>
+</div> -->
 {% endblock %}
