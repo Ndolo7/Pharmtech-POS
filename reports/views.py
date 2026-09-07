@@ -570,9 +570,6 @@ def orders_report_view(request):
 
 @login_required
 def products_trail_report_view(request):
-    if not _is_super_admin(request.user):
-        return HttpResponseForbidden("Permission denied.")
-
     branch_ctx = _report_branch_context(request)
     active_branch = branch_ctx["active_branch"]
     product_options = Product.objects.filter(is_active=True).order_by("name")
