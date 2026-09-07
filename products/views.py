@@ -875,10 +875,6 @@ def manual_order_approval_list_view(request):
         .select_related("product", "created_by", "approved_by")
         .order_by("-created_at")
     )
-    pending_branch_supply_requests = BranchSupplyRequest.objects.filter(status=BranchSupplyRequest.STATUS_PENDING).select_related(
-        "product", "source_branch", "destination_branch", "created_by"
-    ).order_by("-created_at")
-
     if selected_branch:
         filtered_orders = []
         for order in pending_manual_orders:
@@ -889,16 +885,13 @@ def manual_order_approval_list_view(request):
                 filtered_orders.append(order)
         pending_manual_orders = filtered_orders
 
-        pending_branch_supply_requests = pending_branch_supply_requests.filter(
-            Q(destination_branch=selected_branch) | Q(source_branch=selected_branch)
-        )
-
+    # Dead-stock inter-branch transfers are auto-approved and never need manual review.
     return render(
         request,
         "products/order_approvals.html",
         {
             "pending_manual_orders": pending_manual_orders,
-            "pending_branch_supply_requests": pending_branch_supply_requests,
+            "pending_branch_supply_requests": [],
             "all_branches": all_branches,
             "selected_branch": selected_branch,
             "selected_branch_id": selected_branch_id if selected_branch else "",
