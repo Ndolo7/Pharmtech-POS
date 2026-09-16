@@ -118,27 +118,39 @@ def _auto_order_stale_days() -> int:
 
 def _is_primary_live_supplier_request(supplier_request: SupplierReorderRequest, now=None) -> bool:
     reference_time = now or timezone.now()
+    qs = SupplierReorderRequest.objects.filter(
+        supplier_id=supplier_request.supplier_id,
+        status=SupplierReorderRequest.STATUS_PENDING,
+        expires_at__gt=reference_time,
+    )
+    if supplier_request.branch_id:
+        qs = qs.filter(branch_id=supplier_request.branch_id)
+    else:
+        qs = qs.filter(branch__isnull=True)
+
     first_live_request_id = (
-        SupplierReorderRequest.objects.filter(
-            supplier_id=supplier_request.supplier_id,
-            status=SupplierReorderRequest.STATUS_PENDING,
-            expires_at__gt=reference_time,
-        )
-        .order_by("created_at", "id")
+        qs.order_by("created_at", "id")
         .values_list("id", flat=True)
         .first()
     )
     return bool(first_live_request_id == supplier_request.id)
 
 
-def _has_auto_notification_sent_today_for_supplier(supplier_id: int, now=None) -> bool:
+def _has_auto_notification_sent_today_for_supplier(
+    supplier_id: int,
+    branch_id: int | None = None,
+    now=None,
+) -> bool:
     reference_time = now or timezone.now()
     today_local = timezone.localdate(reference_time)
-    return SupplierReorderRequest.objects.filter(
+    qs = SupplierReorderRequest.objects.filter(
         supplier_id=supplier_id,
         reorder_request__origin=AutoReorderRequest.ORIGIN_AUTO,
         emailed_at__date=today_local,
-    ).exists()
+    )
+    if branch_id is not None:
+        qs = qs.filter(branch_id=branch_id)
+    return qs.exists()
 
 
 def _sanitize_filename_fragment(value: str) -> str:
@@ -235,9 +247,11 @@ def _supplier_reorder_response_link(supplier_request: SupplierReorderRequest) ->
 
 
 def _supplier_reorder_message_text(supplier_request: SupplierReorderRequest, response_link: str) -> str:
+    branch_name = supplier_request.branch.name if supplier_request.branch else "Unspecified Branch"
     return (
         f"Dear {supplier_request.supplier.contact_person or supplier_request.supplier.name},\n\n"
-        "Please click this link. Supply requested. What you do have, tick it. You must respond within 3 hours:\n"
+        f"Branch: {branch_name}\n\n"
+        f"Please click this link. Supply requested for {branch_name}. What you do have, tick it. You must respond within 3 hours:\n"
         f"{response_link}\n\n"
     )
 
@@ -247,9 +261,12 @@ def _supplier_reorder_batch_message_text(
     *,
     contact_name: str,
 ) -> str:
+    first_req = supplier_requests[0] if supplier_requests else None
+    branch_name = first_req.branch.name if (first_req and first_req.branch) else "Unspecified Branch"
     intro = (
         f"Dear {contact_name},\n\n"
-        "Please review and respond to the following manual order request(s) within 1 hour:\n\n"
+        f"Branch: {branch_name}\n\n"
+        f"Please review and respond to the following manual order request(s) for {branch_name} branch within 1 hour:\n\n"
     )
     lines = []
     for index, supplier_request in enumerate(supplier_requests, start=1):
@@ -854,104 +871,143 @@ def notify_next_supplier(reorder_request_id: int):
             return {"status": "exhausted"}
 
         expires_at = now + timedelta(seconds=_auto_order_link_expiry_seconds())
-        supplier_request = SupplierReorderRequest.objects.create(
-            reorder_request=reorder,
-            supplier=next_supplier,
-            priority=supplier_priority or 1,
-            requested_quantity=reorder.remaining_quantity,
-            expires_at=expires_at,
-        )
+        created_supplier_requests = []
+        normalized_reqs = [
+            (str(b_name), max(int(b_qty or 0), 0))
+            for b_name, b_qty in (reorder.branch_requirements or {}).items()
+            if max(int(b_qty or 0), 0) > 0
+        ]
+
+        if normalized_reqs:
+            branch_names = [item[0] for item in normalized_reqs]
+            branch_map = {b.name: b for b in Branch.objects.filter(is_active=True, name__in=branch_names)}
+            for b_name, b_qty in normalized_reqs:
+                branch_obj = branch_map.get(b_name)
+                req = SupplierReorderRequest.objects.create(
+                    reorder_request=reorder,
+                    supplier=next_supplier,
+                    branch=branch_obj,
+                    priority=supplier_priority or 1,
+                    requested_quantity=b_qty,
+                    expires_at=expires_at,
+                )
+                created_supplier_requests.append(req)
+
+        if not created_supplier_requests:
+            req = SupplierReorderRequest.objects.create(
+                reorder_request=reorder,
+                supplier=next_supplier,
+                branch=None,
+                priority=supplier_priority or 1,
+                requested_quantity=reorder.remaining_quantity,
+                expires_at=expires_at,
+            )
+            created_supplier_requests.append(req)
+
+        supplier_request = created_supplier_requests[0]
 
     reference_now = timezone.now()
     is_manual_reorder = supplier_request.reorder_request.origin == AutoReorderRequest.ORIGIN_MANUAL
-    is_primary_live_request = _is_primary_live_supplier_request(supplier_request, now=reference_now)
 
-    if not is_primary_live_request:
-        expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
-        return {
-            "status": "notification_suppressed_existing_pending_supplier",
-            "supplier_request_id": supplier_request.id,
-            "sms_status": "skipped_existing_pending_supplier_notification",
-        }
+    unnotified_requests = list(
+        SupplierReorderRequest.objects.select_related("reorder_request__product", "supplier", "branch")
+        .filter(
+            supplier_id=supplier_request.supplier_id,
+            status=SupplierReorderRequest.STATUS_PENDING,
+            emailed_at__isnull=True,
+        )
+        .order_by("created_at", "id")
+    )
 
-    if not is_manual_reorder and _has_auto_notification_sent_today_for_supplier(
-        supplier_request.supplier_id,
-        now=reference_now,
-    ):
-        expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
-        return {
-            "status": "notification_suppressed_daily_limit",
-            "supplier_request_id": supplier_request.id,
-            "sms_status": "skipped_existing_pending_supplier_notification",
-        }
+    if not unnotified_requests:
+        return {"status": "no_pending_unnotified_requests"}
 
-    message = ""
-    supplier_requests_to_mark: list[SupplierReorderRequest] = [supplier_request]
-    if is_manual_reorder:
-        supplier_requests_to_mark = list(
-            SupplierReorderRequest.objects.select_related("reorder_request__product", "supplier")
-            .filter(
-                supplier_id=supplier_request.supplier_id,
-                status=SupplierReorderRequest.STATUS_PENDING,
-                emailed_at__isnull=True,
-                reorder_request__origin=AutoReorderRequest.ORIGIN_MANUAL,
+    requests_by_branch = defaultdict(list)
+    for req in unnotified_requests:
+        requests_by_branch[req.branch_id].append(req)
+
+    notifications_sent = 0
+    last_sms_status = "none"
+    suppression_status = "notification_suppressed"
+
+    for branch_id, branch_requests in requests_by_branch.items():
+        primary_req = branch_requests[0]
+        if not _is_primary_live_supplier_request(primary_req, now=reference_now):
+            for req in branch_requests:
+                expire_supplier_request.apply_async(args=[req.id], eta=req.expires_at)
+            suppression_status = "notification_suppressed_existing_pending_supplier"
+            continue
+
+        if not is_manual_reorder and _has_auto_notification_sent_today_for_supplier(
+            primary_req.supplier_id,
+            branch_id=branch_id,
+            now=reference_now,
+        ):
+            for req in branch_requests:
+                expire_supplier_request.apply_async(args=[req.id], eta=req.expires_at)
+            suppression_status = "notification_suppressed_daily_limit"
+            continue
+
+        branch_name = primary_req.branch.name if primary_req.branch else "Unspecified Branch"
+        if is_manual_reorder:
+            message = _supplier_reorder_batch_message_text(
+                branch_requests,
+                contact_name=primary_req.supplier.contact_person or primary_req.supplier.name,
             )
-            .order_by("created_at", "id")
-        )
-        if not any(req.id == supplier_request.id for req in supplier_requests_to_mark):
-            expire_supplier_request.apply_async(args=[supplier_request.id], eta=supplier_request.expires_at)
-            return {
-                "status": "notification_suppressed_existing_pending_supplier",
-                "supplier_request_id": supplier_request.id,
-                "sms_status": "skipped_existing_pending_supplier_notification",
-            }
-        message = _supplier_reorder_batch_message_text(
-            supplier_requests_to_mark,
-            contact_name=supplier_request.supplier.contact_person or supplier_request.supplier.name,
-        )
-    else:
-        response_link = _supplier_reorder_response_link(supplier_request)
-        message = _supplier_reorder_message_text(supplier_request, response_link)
+        else:
+            response_link = _supplier_reorder_response_link(primary_req)
+            message = _supplier_reorder_message_text(primary_req, response_link)
 
-    try:
-        send_mail(
-            subject="Purchase Order",
-            message=message,
-            from_email=_mail_sender(),
-            recipient_list=[supplier_request.supplier.email],
-            fail_silently=False,
-        )
-    except Exception:
-        logger.exception("Failed to send reorder request email", extra={"supplier_request_id": supplier_request.id})
-        with transaction.atomic():
-            failed = SupplierReorderRequest.objects.select_for_update().filter(pk=supplier_request.id).first()
-            if failed and failed.status == SupplierReorderRequest.STATUS_PENDING:
-                failed.status = SupplierReorderRequest.STATUS_EMAIL_FAILED
-                failed.responded_at = timezone.now()
-                failed.save(update_fields=["status", "responded_at", "updated_at"])
+        subject = f"Purchase Order - {branch_name}"
 
-        notify_next_supplier.delay(reorder_request_id)
-        return {"status": "email_failed", "supplier_request_id": supplier_request.id}
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=_mail_sender(),
+                recipient_list=[primary_req.supplier.email],
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception("Failed to send reorder request email", extra={"supplier_request_id": primary_req.id})
+            with transaction.atomic():
+                for req in branch_requests:
+                    failed = SupplierReorderRequest.objects.select_for_update().filter(pk=req.id).first()
+                    if failed and failed.status == SupplierReorderRequest.STATUS_PENDING:
+                        failed.status = SupplierReorderRequest.STATUS_EMAIL_FAILED
+                        failed.responded_at = timezone.now()
+                        failed.save(update_fields=["status", "responded_at", "updated_at"])
 
-    sms_outcome = _send_supplier_reorder_sms_once(supplier_request, message)
-    sms_status = sms_outcome.get("status")
-    if sms_status == "sms_failed":
-        logger.warning(
-            "Immediate reorder request SMS failed; queued retry task",
-            extra={
-                "supplier_request_id": supplier_request.id,
-                "reason": sms_outcome.get("reason"),
-                "sms_result": sms_outcome.get("sms_result"),
-            },
-        )
-        send_supplier_reorder_sms.delay(supplier_request.id)
-        sms_status = "queued_retry"
+            notify_next_supplier.delay(reorder_request_id)
+            return {"status": "email_failed", "supplier_request_id": primary_req.id}
 
-    mark_ids = [req.id for req in supplier_requests_to_mark]
-    SupplierReorderRequest.objects.filter(pk__in=mark_ids).update(emailed_at=timezone.now())
-    for marked_request in supplier_requests_to_mark:
-        expire_supplier_request.apply_async(args=[marked_request.id], eta=marked_request.expires_at)
-    return {"status": "email_sent", "supplier_request_id": supplier_request.id, "sms_status": sms_status}
+        sms_outcome = _send_supplier_reorder_sms_once(primary_req, message)
+        sms_status = sms_outcome.get("status")
+        if sms_status == "sms_failed":
+            logger.warning(
+                "Immediate reorder request SMS failed; queued retry task",
+                extra={
+                    "supplier_request_id": primary_req.id,
+                    "reason": sms_outcome.get("reason"),
+                    "sms_result": sms_outcome.get("sms_result"),
+                },
+            )
+            send_supplier_reorder_sms.delay(primary_req.id)
+            sms_status = "queued_retry"
+
+        last_sms_status = sms_status
+        mark_ids = [req.id for req in branch_requests]
+        SupplierReorderRequest.objects.filter(pk__in=mark_ids).update(emailed_at=timezone.now())
+        for marked_request in branch_requests:
+            expire_supplier_request.apply_async(args=[marked_request.id], eta=marked_request.expires_at)
+        notifications_sent += 1
+
+    return {
+        "status": "email_sent" if notifications_sent > 0 else suppression_status,
+        "supplier_request_id": supplier_request.id,
+        "sms_status": last_sms_status if notifications_sent > 0 else "skipped_existing_pending_supplier_notification",
+        "notifications_sent": notifications_sent,
+    }
 
 
 @shared_task
