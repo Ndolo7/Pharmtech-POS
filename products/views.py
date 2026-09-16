@@ -1282,9 +1282,21 @@ def product_create_view(request):
 
             if active_branch:
                 exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
+                stock_qty = form.cleaned_data.get("stock_quantity")
                 stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0})
+                if stock_qty is not None:
+                    adjustment = stock_qty - stock.quantity
+                    stock.quantity = stock_qty
+                    if adjustment != 0:
+                        StockMovement.objects.create(
+                            product=product,
+                            branch=active_branch,
+                            movement_type="adjustment",
+                            quantity=adjustment,
+                            created_by=request.user,
+                        )
                 stock.exempt_from_auto_reorder = exempt_val
-                stock.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+                stock.save(update_fields=["quantity", "exempt_from_auto_reorder", "updated_at"])
 
             messages.success(request, "Product created successfully.")
             return _render_product_table(request, branch=active_branch)
@@ -1323,6 +1335,7 @@ def product_edit_view(request, pk):
 
     stock_row = Stock.objects.filter(product=product, branch=active_branch).first() if active_branch else None
     current_exempt = stock_row.exempt_from_auto_reorder if stock_row else False
+    current_stock_qty = stock_row.quantity if stock_row else 0
 
     if request.method == "POST":
         form = ProductForm(request.POST, instance=product)
@@ -1333,9 +1346,21 @@ def product_edit_view(request, pk):
 
             if active_branch:
                 exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
+                stock_qty = form.cleaned_data.get("stock_quantity")
                 stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0})
+                if stock_qty is not None:
+                    adjustment = stock_qty - stock.quantity
+                    stock.quantity = stock_qty
+                    if adjustment != 0:
+                        StockMovement.objects.create(
+                            product=product,
+                            branch=active_branch,
+                            movement_type="adjustment",
+                            quantity=adjustment,
+                            created_by=request.user,
+                        )
                 stock.exempt_from_auto_reorder = exempt_val
-                stock.save(update_fields=["exempt_from_auto_reorder", "updated_at"])
+                stock.save(update_fields=["quantity", "exempt_from_auto_reorder", "updated_at"])
 
             messages.success(request, "Product updated.")
             return _render_product_table(request, branch=active_branch)
@@ -1352,8 +1377,11 @@ def product_edit_view(request, pk):
         )
     form = ProductForm(instance=product)
     form.initial["exempt_from_auto_reorder"] = current_exempt
+    form.initial["stock_quantity"] = current_stock_qty
     if "exempt_from_auto_reorder" in form.fields:
         form.fields["exempt_from_auto_reorder"].initial = current_exempt
+    if "stock_quantity" in form.fields:
+        form.fields["stock_quantity"].initial = current_stock_qty
     return render(
         request,
         "products/partials/_product_form.html",

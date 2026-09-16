@@ -7,6 +7,12 @@ from .sms import normalize_phone_number
 
 
 class ProductForm(forms.ModelForm):
+    stock_quantity = forms.IntegerField(
+        required=False,
+        min_value=0,
+        widget=forms.NumberInput(attrs={"class": "form-input", "placeholder": "0", "min": "0"}),
+    )
+
     class Meta:
         model = Product
         fields = (
@@ -31,6 +37,7 @@ class ProductForm(forms.ModelForm):
             "pack_quantity": forms.NumberInput(attrs={"class": "form-input", "placeholder": "1", "min": "1"}),
             "exempt_from_auto_reorder": forms.CheckboxInput(attrs={"class": "form-checkbox"}),
         }
+
 
 
 class CategoryForm(forms.ModelForm):
