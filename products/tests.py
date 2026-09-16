@@ -1044,7 +1044,7 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
             requested_quantity=5,
             remaining_quantity=5,
             origin=AutoReorderRequest.ORIGIN_AUTO,
-            branch_requirements={"Sukari": 5},
+            branch_requirements={"Wendani": 5},
             status=AutoReorderRequest.STATUS_OPEN,
         )
 
@@ -1184,7 +1184,7 @@ class NotifyNextSupplierSmsDedupTests(TestCase):
                 supplier=self.supplier,
                 status=SupplierReorderRequest.STATUS_PENDING,
             ).exclude(emailed_at__isnull=True).count(),
-            2,
+            1,
         )
 
     @patch("products.tasks.send_sms_via_leopard")
@@ -2382,6 +2382,8 @@ class ZeroMovementExemptCommandTests(TestCase):
             cost_price=Decimal("30.00"),
             is_active=True,
         )
+        Stock.objects.create(product=self.product_mixed_mov, branch=self.wendani, quantity=10)
+
         StockMovement.objects.create(
             product=self.product_mixed_mov,
             branch=self.wendani,

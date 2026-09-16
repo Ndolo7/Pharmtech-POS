@@ -165,6 +165,13 @@ class SupplierReorderRequest(models.Model):
         related_name="supplier_requests",
     )
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name="reorder_requests")
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supplier_reorder_requests",
+    )
     priority = models.PositiveIntegerField()
     requested_quantity = models.PositiveIntegerField()
     fulfilled_quantity = models.PositiveIntegerField(default=0)
