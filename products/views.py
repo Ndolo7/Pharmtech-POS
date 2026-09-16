@@ -2434,10 +2434,11 @@ def category_edit_view(request, pk):
 
 def supplier_reorder_response_view(request, token):
     primary_request = get_object_or_404(
-        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product"),
+        SupplierReorderRequest.objects.select_related("supplier", "reorder_request__product", "branch"),
         token=token,
     )
     supplier = primary_request.supplier
+    target_branch = primary_request.branch
     now = timezone.now()
 
     # Expire any pending expired requests for this supplier
@@ -2464,7 +2465,13 @@ def supplier_reorder_response_view(request, token):
         supplier=supplier,
         status=SupplierReorderRequest.STATUS_PENDING,
         expires_at__gte=now
-    ).select_related("reorder_request__product").order_by("created_at")
+    ).select_related("reorder_request__product", "branch").order_by("created_at")
+
+    if target_branch:
+        pending_requests_qs = pending_requests_qs.filter(branch=target_branch)
+    else:
+        pending_requests_qs = pending_requests_qs.filter(branch__isnull=True)
+
     pending_requests = list(pending_requests_qs)
 
     branch_product_map = {}
@@ -2472,6 +2479,9 @@ def supplier_reorder_response_view(request, token):
         branch_breakdown = _normalized_branch_requirements(
             pending_request.reorder_request.branch_requirements or {}
         )
+        if target_branch:
+            branch_breakdown = [(b_name, qty) for b_name, qty in branch_breakdown if b_name == target_branch.name]
+
         pending_request.branch_breakdown = branch_breakdown
         pack_quantity = max(int(pending_request.reorder_request.product.pack_quantity or 1), 1)
         for branch_name, qty in branch_breakdown:
