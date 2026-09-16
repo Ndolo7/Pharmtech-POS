@@ -2436,3 +2436,108 @@ class ZeroMovementExemptCommandTests(TestCase):
         # Only Wendani stock created/updated
         self.assertTrue(Stock.objects.filter(product=self.product_zero_mov, branch=self.wendani).exists())
         self.assertFalse(Stock.objects.filter(product=self.product_zero_mov, branch=self.sukari).exists())
+
+
+class PerBranchNotificationTests(TestCase):
+    def setUp(self):
+        self.wendani = Branch.objects.create(
+            name="Wendani",
+            code="WEN-PB",
+            address="Wendani",
+            phone_number="0700000010",
+            is_active=True,
+        )
+        self.sukari = Branch.objects.create(
+            name="Sukari",
+            code="SUK-PB",
+            address="Sukari",
+            phone_number="0700000020",
+            is_active=True,
+        )
+        self.supplier = Supplier.objects.create(
+            name="Apex Pharma",
+            email="apex@example.com",
+            phone_number="0711111111",
+            contact_person="Dr. Apex",
+            priority=1,
+        )
+        self.product = Product.objects.create(
+            name="Panadol Extra 500mg",
+            barcode="PAN-PB-001",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("6.00"),
+            is_active=True,
+        )
+
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_per_branch_notifications_sent_with_branch_name(self, send_mail_mock, send_sms_mock):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        reorder = AutoReorderRequest.objects.create(
+            product=self.product,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=7,
+            remaining_quantity=7,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 4, "Sukari": 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        result = notify_next_supplier(reorder.id)
+
+        self.assertEqual(result.get("status"), "email_sent")
+        self.assertEqual(result.get("notifications_sent"), 2)
+
+        self.assertEqual(send_mail_mock.call_count, 2)
+        subjects = [call.kwargs.get("subject") for call in send_mail_mock.call_args_list]
+        bodies = [call.kwargs.get("message") for call in send_mail_mock.call_args_list]
+
+        self.assertIn("Purchase Order - Wendani", subjects)
+        self.assertIn("Purchase Order - Sukari", subjects)
+        self.assertTrue(any("Branch: Wendani" in body for body in bodies))
+        self.assertTrue(any("Branch: Sukari" in body for body in bodies))
+
+    def test_supplier_response_link_filters_by_branch(self):
+        reorder = AutoReorderRequest.objects.create(
+            product=self.product,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=7,
+            remaining_quantity=7,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 4, "Sukari": 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        req_wendani = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            branch=self.wendani,
+            priority=1,
+            requested_quantity=4,
+            expires_at=timezone.now() + timedelta(hours=3),
+        )
+        req_sukari = SupplierReorderRequest.objects.create(
+            reorder_request=reorder,
+            supplier=self.supplier,
+            branch=self.sukari,
+            priority=1,
+            requested_quantity=3,
+            expires_at=timezone.now() + timedelta(hours=3),
+        )
+
+        resp_wendani = self.client.get(reverse("supplier-reorder-response", kwargs={"token": req_wendani.token}))
+        self.assertEqual(resp_wendani.status_code, 200)
+        branch_groups_wendani = resp_wendani.context["branch_groups"]
+        self.assertEqual(len(branch_groups_wendani), 1)
+        self.assertEqual(branch_groups_wendani[0]["name"], "Wendani")
+
+        resp_sukari = self.client.get(reverse("supplier-reorder-response", kwargs={"token": req_sukari.token}))
+        self.assertEqual(resp_sukari.status_code, 200)
+        branch_groups_sukari = resp_sukari.context["branch_groups"]
+        self.assertEqual(len(branch_groups_sukari), 1)
+        self.assertEqual(branch_groups_sukari[0]["name"], "Sukari")
+
