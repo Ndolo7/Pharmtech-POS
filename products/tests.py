@@ -2541,3 +2541,61 @@ class PerBranchNotificationTests(TestCase):
         self.assertEqual(len(branch_groups_sukari), 1)
         self.assertEqual(branch_groups_sukari[0]["name"], "Sukari")
 
+
+class ProductEditBranchStockTests(TestCase):
+    def setUp(self):
+        self.branch = Branch.objects.create(
+            name="Wendani",
+            code="WEN-ED",
+            address="Wendani",
+            phone_number="0700000030",
+            is_active=True,
+        )
+        self.user = User.objects.create_superuser(
+            username="admin_edit_test",
+            email="admin_edit@example.com",
+            password="password123",
+            branch=self.branch,
+        )
+        self.product = Product.objects.create(
+            name="Amoxicillin 500mg",
+            barcode="AMX-001",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("10.00"),
+            reorder_level=5,
+            max_stock=50,
+            pack_quantity=1,
+            is_active=True,
+        )
+        self.stock = Stock.objects.create(
+            product=self.product,
+            branch=self.branch,
+            quantity=10,
+        )
+        self.client.force_login(self.user)
+
+    def test_product_edit_updates_branch_stock_quantity(self):
+        response = self.client.post(
+            reverse("product-edit", kwargs={"pk": self.product.pk}),
+            {
+                "name": "Amoxicillin 500mg Updated",
+                "barcode": "AMX-001",
+                "unit_price": "18.00",
+                "cost_price": "12.00",
+                "reorder_level": "5",
+                "max_stock": "50",
+                "pack_quantity": "1",
+                "stock_quantity": "35",
+                "branch_id": str(self.branch.id),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.quantity, 35)
+
+        movement = StockMovement.objects.filter(product=self.product, branch=self.branch).latest("id")
+        self.assertEqual(movement.movement_type, "adjustment")
+        self.assertEqual(movement.quantity, 25)
+
+

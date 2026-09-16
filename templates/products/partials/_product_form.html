@@ -46,9 +46,17 @@
             {{ form.max_stock }}
           </div>
         </div>
-        <div class="form-group">
-          <label>Pack Quantity *</label>
-          {{ form.pack_quantity }}
+        <div class="form-row">
+          <div class="form-group">
+            <label>Pack Quantity *</label>
+            {{ form.pack_quantity }}
+          </div>
+          {% if active_branch %}
+          <div class="form-group">
+            <label>Stock Quantity (units) at {{ active_branch.name }}</label>
+            {{ form.stock_quantity }}
+          </div>
+          {% endif %}
         </div>
         <div class="form-group">
           <label>Description</label>
