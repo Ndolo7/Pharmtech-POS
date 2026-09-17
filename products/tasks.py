@@ -260,21 +260,28 @@ def _supplier_reorder_batch_message_text(
     supplier_requests: list[SupplierReorderRequest],
     *,
     contact_name: str,
+    is_manual: bool = False,
 ) -> str:
     first_req = supplier_requests[0] if supplier_requests else None
     branch_name = first_req.branch.name if (first_req and first_req.branch) else "Unspecified Branch"
+    primary_link = _supplier_reorder_response_link(first_req) if first_req else ""
+    hours_str = "1 hour" if is_manual else "3 hours"
+    order_type_str = "manual order request(s)" if is_manual else "order request(s)"
+
     intro = (
         f"Dear {contact_name},\n\n"
         f"Branch: {branch_name}\n\n"
-        f"Please review and respond to the following manual order request(s) for {branch_name} branch within 1 hour:\n\n"
+        f"Please review and respond to the following {order_type_str} for {branch_name} branch within {hours_str}:\n\n"
     )
     lines = []
     for index, supplier_request in enumerate(supplier_requests, start=1):
-        response_link = _supplier_reorder_response_link(supplier_request)
         product_name = supplier_request.reorder_request.product.name
         requested_quantity = supplier_request.requested_quantity
-        lines.append(f"{index}. {product_name} - {requested_quantity} packet(s)\n{response_link}")
-    return intro + "\n\n".join(lines) + "\n\n"
+        lines.append(f"{index}. {product_name} - {requested_quantity} packet(s)")
+
+    link_section = f"\n\nPlease click this link to respond:\n{primary_link}\n\n" if primary_link else "\n\n"
+    return intro + "\n".join(lines) + link_section
+
 
 
 def _get_or_create_unregistered_supplier(unregistered_name: str) -> Supplier:
@@ -575,6 +582,7 @@ def scan_low_stock_and_trigger_reorders():
     resumed_count = 0
     cancelled_unsold_count = 0
     internal_supply_created = 0
+    reorder_ids_to_notify = []
     active_branches = list(Branch.objects.filter(is_active=True).order_by("id"))
     active_branch_by_id = {branch.id: branch for branch in active_branches}
     sold_branches_by_product = defaultdict(set)
@@ -768,10 +776,8 @@ def scan_low_stock_and_trigger_reorders():
     }
 
 
-@shared_task
-def notify_next_supplier(reorder_request_id: int):
+def _ensure_supplier_request_created(reorder_request_id: int) -> SupplierReorderRequest | dict | None:
     now = timezone.now()
-
     with transaction.atomic():
         reorder = (
             AutoReorderRequest.objects.select_for_update()
@@ -779,20 +785,17 @@ def notify_next_supplier(reorder_request_id: int):
             .filter(pk=reorder_request_id)
             .first()
         )
-        if not reorder:
-            return {"status": "missing_reorder_request"}
-
-        if reorder.status != AutoReorderRequest.STATUS_OPEN:
-            return {"status": "inactive", "reorder_status": reorder.status}
+        if not reorder or reorder.status != AutoReorderRequest.STATUS_OPEN:
+            return None
 
         if reorder.origin == AutoReorderRequest.ORIGIN_MANUAL and reorder.approval_status == AutoReorderRequest.APPROVAL_PENDING:
-            return {"status": "awaiting_approval", "reorder_status": reorder.status}
+            return None
 
         if reorder.remaining_quantity <= 0:
             reorder.status = AutoReorderRequest.STATUS_FULFILLED
             reorder.completed_at = now
             reorder.save(update_fields=["status", "completed_at", "updated_at"])
-            return {"status": "fulfilled"}
+            return None
 
         pending = (
             reorder.supplier_requests.select_for_update()
@@ -803,12 +806,7 @@ def notify_next_supplier(reorder_request_id: int):
 
         if pending:
             if now <= pending.expires_at:
-                return {
-                    "status": "awaiting_supplier",
-                    "supplier_request_id": pending.id,
-                    "supplier": pending.supplier_id,
-                }
-
+                return pending
             pending.status = SupplierReorderRequest.STATUS_EXPIRED
             pending.responded_at = now
             pending.save(update_fields=["status", "responded_at", "updated_at"])
@@ -865,10 +863,8 @@ def notify_next_supplier(reorder_request_id: int):
             reorder.status = AutoReorderRequest.STATUS_EXHAUSTED
             reorder.completed_at = now
             reorder.save(update_fields=["status", "completed_at", "updated_at"])
-
             send_batched_exhaustion_alerts.apply_async(countdown=60)
-
-            return {"status": "exhausted"}
+            return None
 
         expires_at = now + timedelta(seconds=_auto_order_link_expiry_seconds())
         created_supplier_requests = []
@@ -904,7 +900,19 @@ def notify_next_supplier(reorder_request_id: int):
             )
             created_supplier_requests.append(req)
 
-        supplier_request = created_supplier_requests[0]
+        return created_supplier_requests[0]
+
+
+@shared_task
+def notify_next_supplier(reorder_request_id: int):
+    supplier_request = _ensure_supplier_request_created(reorder_request_id)
+    if isinstance(supplier_request, dict):
+        return supplier_request
+    if not supplier_request:
+        reorder = AutoReorderRequest.objects.filter(pk=reorder_request_id).first()
+        if not reorder:
+            return {"status": "missing_reorder_request"}
+        return {"status": reorder.status}
 
     reference_now = timezone.now()
     is_manual_reorder = supplier_request.reorder_request.origin == AutoReorderRequest.ORIGIN_MANUAL
@@ -949,14 +957,11 @@ def notify_next_supplier(reorder_request_id: int):
             continue
 
         branch_name = primary_req.branch.name if primary_req.branch else "Unspecified Branch"
-        if is_manual_reorder:
-            message = _supplier_reorder_batch_message_text(
-                branch_requests,
-                contact_name=primary_req.supplier.contact_person or primary_req.supplier.name,
-            )
-        else:
-            response_link = _supplier_reorder_response_link(primary_req)
-            message = _supplier_reorder_message_text(primary_req, response_link)
+        message = _supplier_reorder_batch_message_text(
+            branch_requests,
+            contact_name=primary_req.supplier.contact_person or primary_req.supplier.name,
+            is_manual=is_manual_reorder,
+        )
 
         subject = f"Purchase Order - {branch_name}"
 

@@ -2599,3 +2599,92 @@ class ProductEditBranchStockTests(TestCase):
         self.assertEqual(movement.quantity, 25)
 
 
+class BatchNotificationPerBranchTests(TestCase):
+    def setUp(self):
+        self.wendani = Branch.objects.create(
+            name="Wendani",
+            code="WEN-BAT",
+            address="Wendani",
+            phone_number="0700000040",
+            is_active=True,
+        )
+        self.sukari = Branch.objects.create(
+            name="Sukari",
+            code="SUK-BAT",
+            address="Sukari",
+            phone_number="0700000050",
+            is_active=True,
+        )
+        self.supplier = Supplier.objects.create(
+            name="Beta Pharma",
+            email="beta@example.com",
+            phone_number="0722222222",
+            contact_person="Dr. Beta",
+            priority=1,
+        )
+        self.p1 = Product.objects.create(
+            name="Paracetamol 500mg",
+            barcode="PAR-BAT-01",
+            unit_price=Decimal("10.00"),
+            cost_price=Decimal("5.00"),
+            is_active=True,
+        )
+        self.p2 = Product.objects.create(
+            name="Amoxicillin 500mg",
+            barcode="AMX-BAT-02",
+            unit_price=Decimal("15.00"),
+            cost_price=Decimal("10.00"),
+            is_active=True,
+        )
+
+    @patch("products.tasks.send_sms_via_leopard")
+    @patch("products.tasks.send_mail")
+    def test_multiple_products_for_same_branch_send_only_one_sms_and_one_email_per_branch(
+        self, send_mail_mock, send_sms_mock
+    ):
+        send_mail_mock.return_value = 1
+        send_sms_mock.return_value = {"success": True, "response": {"ok": True}}
+
+        r1 = AutoReorderRequest.objects.create(
+            product=self.p1,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=10,
+            remaining_quantity=10,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 6, "Sukari": 4},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+        r2 = AutoReorderRequest.objects.create(
+            product=self.p2,
+            target_stock_level=50,
+            current_stock_snapshot=0,
+            requested_quantity=8,
+            remaining_quantity=8,
+            origin=AutoReorderRequest.ORIGIN_AUTO,
+            branch_requirements={"Wendani": 5, "Sukari": 3},
+            status=AutoReorderRequest.STATUS_OPEN,
+        )
+
+        from products.tasks import _ensure_supplier_request_created, notify_next_supplier
+        _ensure_supplier_request_created(r1.id)
+        _ensure_supplier_request_created(r2.id)
+
+        notify_next_supplier(r1.id)
+        notify_next_supplier(r2.id)
+
+        # 2 branches (Wendani and Sukari) -> exactly 2 emails and 2 SMS (1 per branch)
+        self.assertEqual(send_mail_mock.call_count, 2)
+        self.assertEqual(send_sms_mock.call_count, 2)
+
+        wendani_email_call = [
+            call for call in send_mail_mock.call_args_list if "Wendani" in call.kwargs.get("subject", "")
+        ][0]
+        wendani_body = wendani_email_call.kwargs.get("message", "")
+
+        # Verify that BOTH products for Wendani branch are included in the 1 email
+        self.assertIn("Paracetamol 500mg - 6 packet(s)", wendani_body)
+        self.assertIn("Amoxicillin 500mg - 5 packet(s)", wendani_body)
+
+
+
