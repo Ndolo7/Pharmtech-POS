@@ -274,12 +274,12 @@ def _supplier_reorder_batch_message_text(
         f"Please review and respond to the following {order_type_str} for {branch_name} branch within {hours_str}:\n\n"
     )
     lines = []
-    for index, supplier_request in enumerate(supplier_requests, start=1):
-        product_name = supplier_request.reorder_request.product.name
-        requested_quantity = supplier_request.requested_quantity
-        lines.append(f"{index}. {product_name} - {requested_quantity} packet(s)")
+    # for index, supplier_request in enumerate(supplier_requests, start=1):
+    #     product_name = supplier_request.reorder_request.product.name
+    #     requested_quantity = supplier_request.requested_quantity
+    #     lines.append(f"{index}. {product_name} - {requested_quantity} packet(s)")
 
-    link_section = f"\n\nPlease click this link to respond:\n{primary_link}\n\n" if primary_link else "\n\n"
+    link_section = f"\n\nClick this link to respond:\n{primary_link}\n\n" if primary_link else "\n\n"
     return intro + "\n".join(lines) + link_section
 
 
