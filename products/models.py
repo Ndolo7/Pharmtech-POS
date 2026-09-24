@@ -206,6 +206,12 @@ class Stock(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE)
     quantity = models.IntegerField(default=0)
+    reorder_level = models.IntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Branch-specific reorder threshold. Falls back to the product default when unset.",
+    )
     exempt_from_auto_reorder = models.BooleanField(
         default=False,
         help_text=(
@@ -220,6 +226,10 @@ class Stock(models.Model):
 
     def __str__(self):
         return f"{self.product.name} - {self.branch.name}: {self.quantity}"
+
+    @property
+    def effective_reorder_level(self):
+        return self.reorder_level if self.reorder_level is not None else self.product.reorder_level
 
 
 class StockMovement(models.Model):
