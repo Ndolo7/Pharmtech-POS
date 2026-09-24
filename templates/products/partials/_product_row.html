@@ -1,6 +1,6 @@
 <tr id="product-row-{{ p.pk }}"
   {% if oob %}hx-swap-oob="outerHTML:#product-row-{{ p.pk }}"{% endif %}
-  class="{% if stock <= p.reorder_level %}row-danger{% endif %}">
+  class="{% if stock <= reorder_level %}row-danger{% endif %}">
   <td>
     <div class="font-medium">{{ p.name }}</div>
     {% if p.barcode %}<div class="text-sm text-muted">{{ p.barcode }}</div>{% endif %}
@@ -8,14 +8,14 @@
   <td>KES {{ p.unit_price|floatformat:2 }}</td>
   <td>KES {{ p.cost_price|floatformat:2 }}</td>
   <td>
-    <span class="{% if stock <= 0 %}text-danger font-bold{% elif stock <= p.reorder_level %}text-danger{% endif %}">
+    <span class="{% if stock <= 0 %}text-danger font-bold{% elif stock <= reorder_level %}text-danger{% endif %}">
       {{ stock }}
     </span>
-    {% if stock <= p.reorder_level %}
+    {% if stock <= reorder_level %}
     <span class="badge badge-danger text-sm" style="margin-left:4px">Low</span>
     {% endif %}
   </td>
-  <td>{{ p.reorder_level }}</td>
+  <td>{{ reorder_level }}</td>
   <td>{{ p.max_stock }}</td>
   <td>{{ p.pack_quantity }}</td>
   <td>
