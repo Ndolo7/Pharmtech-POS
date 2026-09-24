@@ -2598,6 +2598,45 @@ class ProductEditBranchStockTests(TestCase):
         self.assertEqual(movement.movement_type, "adjustment")
         self.assertEqual(movement.quantity, 25)
 
+    def test_product_edit_updates_reorder_level_only_for_selected_branch(self):
+        other_branch = Branch.objects.create(
+            name="Sukari",
+            code="SUK-ED",
+            address="Sukari",
+            phone_number="0700000031",
+            is_active=True,
+        )
+        other_stock = Stock.objects.create(
+            product=self.product,
+            branch=other_branch,
+            quantity=10,
+            reorder_level=5,
+        )
+
+        response = self.client.post(
+            reverse("product-edit", kwargs={"pk": self.product.pk}),
+            {
+                "name": self.product.name,
+                "barcode": self.product.barcode,
+                "unit_price": str(self.product.unit_price),
+                "cost_price": str(self.product.cost_price),
+                "reorder_level": "20",
+                "max_stock": str(self.product.max_stock),
+                "pack_quantity": str(self.product.pack_quantity),
+                "stock_quantity": str(self.stock.quantity),
+                "branch_id": str(self.branch.id),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.product.refresh_from_db()
+        self.stock.refresh_from_db()
+        other_stock.refresh_from_db()
+        self.assertEqual(self.product.reorder_level, 5)
+        self.assertEqual(self.stock.reorder_level, 20)
+        self.assertEqual(other_stock.reorder_level, 5)
+
+
 
 class BatchNotificationPerBranchTests(TestCase):
     def setUp(self):
