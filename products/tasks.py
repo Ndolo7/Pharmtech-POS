@@ -647,7 +647,6 @@ def scan_low_stock_and_trigger_reorders():
         id__in=sold_product_ids,
     ).order_by("id"):
         pack_quantity = max(int(product.pack_quantity or 1), 1)
-        reorder_level = product.reorder_level
         max_stock = max(int(product.max_stock or 1), 1)
         sold_branch_ids = sold_branches_by_product.get(product.id, set())
         if not sold_branch_ids:
@@ -656,10 +655,14 @@ def scan_low_stock_and_trigger_reorders():
         supplier_branch_requirements = {}
         exempt_branch_ids: set[int] = set()
         stock_by_branch_id: dict[int, int] = {}
+        reorder_level_by_branch_id: dict[int, int] = {}
         for stock_row in product.stock_set.filter(branch__is_active=True).only(
-            "branch_id", "quantity", "exempt_from_auto_reorder"
+            "branch_id", "quantity", "reorder_level", "exempt_from_auto_reorder"
         ):
             stock_by_branch_id[stock_row.branch_id] = int(stock_row.quantity or 0)
+            reorder_level_by_branch_id[stock_row.branch_id] = (
+                stock_row.reorder_level if stock_row.reorder_level is not None else product.reorder_level
+            )
             if stock_row.exempt_from_auto_reorder:
                 exempt_branch_ids.add(stock_row.branch_id)
         last_sale_dates = _branch_last_sale_dates(product.id)
@@ -676,7 +679,7 @@ def scan_low_stock_and_trigger_reorders():
                 # reaching here means the Stock row is still marked stale).
                 continue
             branch_stock = stock_by_branch_id.get(branch_id, 0)
-            if branch_stock > reorder_level:
+            if branch_stock > reorder_level_by_branch_id.get(branch_id, product.reorder_level):
                 continue
 
             target_units = _auto_reorder_target_units(
