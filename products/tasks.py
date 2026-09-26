@@ -647,7 +647,6 @@ def scan_low_stock_and_trigger_reorders():
         id__in=sold_product_ids,
     ).order_by("id"):
         pack_quantity = max(int(product.pack_quantity or 1), 1)
-        max_stock = max(int(product.max_stock or 1), 1)
         sold_branch_ids = sold_branches_by_product.get(product.id, set())
         if not sold_branch_ids:
             continue
@@ -656,12 +655,16 @@ def scan_low_stock_and_trigger_reorders():
         exempt_branch_ids: set[int] = set()
         stock_by_branch_id: dict[int, int] = {}
         reorder_level_by_branch_id: dict[int, int] = {}
+        max_stock_by_branch_id: dict[int, int] = {}
         for stock_row in product.stock_set.filter(branch__is_active=True).only(
-            "branch_id", "quantity", "reorder_level", "exempt_from_auto_reorder"
+            "branch_id", "quantity", "reorder_level", "max_stock", "exempt_from_auto_reorder"
         ):
             stock_by_branch_id[stock_row.branch_id] = int(stock_row.quantity or 0)
             reorder_level_by_branch_id[stock_row.branch_id] = (
                 stock_row.reorder_level if stock_row.reorder_level is not None else product.reorder_level
+            )
+            max_stock_by_branch_id[stock_row.branch_id] = (
+                stock_row.max_stock if stock_row.max_stock is not None else product.max_stock
             )
             if stock_row.exempt_from_auto_reorder:
                 exempt_branch_ids.add(stock_row.branch_id)
@@ -683,7 +686,7 @@ def scan_low_stock_and_trigger_reorders():
                 continue
 
             target_units = _auto_reorder_target_units(
-                max_stock_units=max_stock,
+                max_stock_units=max_stock_by_branch_id.get(branch_id, product.max_stock),
                 current_stock_units=branch_stock,
                 pack_quantity=pack_quantity,
             )
@@ -708,6 +711,16 @@ def scan_low_stock_and_trigger_reorders():
 
         required_quantity = sum(supplier_branch_requirements.values())
         current_stock = product.current_stock()
+        required_branch_ids = [
+            branch_id
+            for branch_id in sold_branch_ids
+            if active_branch_by_id.get(branch_id)
+            and active_branch_by_id[branch_id].name in supplier_branch_requirements
+        ]
+        max_stock = max(
+            (max_stock_by_branch_id.get(branch_id, product.max_stock) for branch_id in required_branch_ids),
+            default=product.max_stock,
+        )
 
         reorder_id = None
         with transaction.atomic():

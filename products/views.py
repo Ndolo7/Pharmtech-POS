@@ -669,6 +669,8 @@ def manual_order_create_view(request):
             for product, branch, packets in external_order_lines:
                 branch_requirements = {branch.name: packets}
                 current_stock = product.current_stock()
+                stock_row = Stock.objects.filter(product=product, branch=branch).first()
+                branch_max_stock = stock_row.effective_max_stock if stock_row else product.max_stock
                 existing_candidates = AutoReorderRequest.objects.select_for_update().filter(
                     product=product,
                     origin=AutoReorderRequest.ORIGIN_MANUAL,
@@ -691,7 +693,7 @@ def manual_order_create_view(request):
                     existing.requested_quantity = _to_non_negative_int(existing.requested_quantity) + packets
                     existing.remaining_quantity = _to_non_negative_int(existing.remaining_quantity) + packets
                     existing.current_stock_snapshot = current_stock
-                    existing.target_stock_level = max(int(product.max_stock or 1), 1)
+                    existing.target_stock_level = max(int(branch_max_stock or 1), 1)
                     existing.branch_requirements = merged_branch_requirements
                     if supplier_strategy == "unregistered" and unregistered_supplier_name:
                         existing.unregistered_supplier_name = unregistered_supplier_name
@@ -722,7 +724,7 @@ def manual_order_create_view(request):
                 else:
                     reorder = AutoReorderRequest.objects.create(
                         product=product,
-                        target_stock_level=max(int(product.max_stock or 1), 1),
+                        target_stock_level=max(int(branch_max_stock or 1), 1),
                         current_stock_snapshot=current_stock,
                         requested_quantity=packets,
                         remaining_quantity=packets,
@@ -1195,7 +1197,8 @@ def _build_product_data(branch, search=""):
         stock_row = Stock.objects.filter(product=product, branch=branch).first() if branch else None
         stock_qty = stock_row.quantity if stock_row else (product.current_stock(branch) if branch else product.current_stock())
         reorder_level = stock_row.effective_reorder_level if stock_row else product.reorder_level
-        payload.append({"product": product, "stock": stock_qty, "reorder_level": reorder_level})
+        max_stock = stock_row.effective_max_stock if stock_row else product.max_stock
+        payload.append({"product": product, "stock": stock_qty, "reorder_level": reorder_level, "max_stock": max_stock})
     return payload
 
 
@@ -1218,9 +1221,10 @@ def _rows_oob_response(request, products, branch=None, include_messages=True):
         stock_row = Stock.objects.filter(product=product, branch=branch).first() if branch else None
         stock_qty = stock_row.quantity if stock_row else (product.current_stock(branch) if branch else product.current_stock())
         reorder_level = stock_row.effective_reorder_level if stock_row else product.reorder_level
+        max_stock = stock_row.effective_max_stock if stock_row else product.max_stock
         payload += render_to_string(
             "products/partials/_product_row.html",
-            {"p": product, "stock": stock_qty, "reorder_level": reorder_level, "oob": True, "active_branch_id": branch.pk if branch else ""},
+            {"p": product, "stock": stock_qty, "reorder_level": reorder_level, "max_stock": max_stock, "oob": True, "active_branch_id": branch.pk if branch else ""},
             request=request,
         )
 
@@ -1287,7 +1291,7 @@ def product_create_view(request):
             if active_branch:
                 exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
                 stock_qty = form.cleaned_data.get("stock_quantity")
-                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0, "reorder_level": product.reorder_level})
+                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0, "reorder_level": product.reorder_level, "max_stock": product.max_stock})
                 if stock_qty is not None:
                     adjustment = stock_qty - stock.quantity
                     stock.quantity = stock_qty
@@ -1343,20 +1347,24 @@ def product_edit_view(request, pk):
 
     if request.method == "POST":
         original_reorder_level = product.reorder_level
+        original_max_stock = product.max_stock
         form = ProductForm(request.POST, instance=product)
         if form.is_valid():
             saved_product = form.save(commit=False)
             branch_reorder_level = form.cleaned_data["reorder_level"]
+            branch_max_stock = form.cleaned_data["max_stock"]
             if active_branch:
                 saved_product.reorder_level = original_reorder_level
+                saved_product.max_stock = original_max_stock
             saved_product.exempt_from_auto_reorder = False
             saved_product.save()
 
             if active_branch:
                 exempt_val = bool(form.cleaned_data.get("exempt_from_auto_reorder")) or request.POST.get("exempt_from_auto_reorder") in ("1", "true", "on")
                 stock_qty = form.cleaned_data.get("stock_quantity")
-                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0, "reorder_level": original_reorder_level})
+                stock, _ = Stock.objects.get_or_create(product=product, branch=active_branch, defaults={"quantity": 0, "reorder_level": original_reorder_level, "max_stock": original_max_stock})
                 stock.reorder_level = branch_reorder_level
+                stock.max_stock = branch_max_stock
                 if stock_qty is not None:
                     adjustment = stock_qty - stock.quantity
                     stock.quantity = stock_qty
@@ -1369,7 +1377,7 @@ def product_edit_view(request, pk):
                             created_by=request.user,
                         )
                 stock.exempt_from_auto_reorder = exempt_val
-                stock.save(update_fields=["quantity", "reorder_level", "exempt_from_auto_reorder", "updated_at"])
+                stock.save(update_fields=["quantity", "reorder_level", "max_stock", "exempt_from_auto_reorder", "updated_at"])
 
             messages.success(request, "Product updated.")
             return _render_product_table(request, branch=active_branch)
@@ -1387,6 +1395,7 @@ def product_edit_view(request, pk):
     form = ProductForm(instance=product)
     form.initial["exempt_from_auto_reorder"] = current_exempt
     form.initial["stock_quantity"] = current_stock_qty
+    form.initial["max_stock"] = stock_row.effective_max_stock if stock_row else product.max_stock
     if "exempt_from_auto_reorder" in form.fields:
         form.fields["exempt_from_auto_reorder"].initial = current_exempt
     if "stock_quantity" in form.fields:
@@ -1411,6 +1420,7 @@ def product_detail_view(request, pk):
     stock_row = Stock.objects.filter(product=product, branch=active_branch).first() if active_branch else None
     stock_qty = stock_row.quantity if stock_row else (product.current_stock(active_branch) if active_branch else product.current_stock())
     reorder_level = stock_row.effective_reorder_level if stock_row else product.reorder_level
+    max_stock = stock_row.effective_max_stock if stock_row else product.max_stock
 
     return render(
         request,
@@ -1419,6 +1429,7 @@ def product_detail_view(request, pk):
             "product": product,
             "stock": stock_qty,
             "reorder_level": reorder_level,
+            "max_stock": max_stock,
             "active_branch": active_branch,
         },
     )

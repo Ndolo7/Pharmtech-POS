@@ -19,7 +19,7 @@
     </thead>
     <tbody>
       {% for item in product_data %}
-      {% include "products/partials/_product_row.html" with p=item.product stock=item.stock reorder_level=item.reorder_level %}
+      {% include "products/partials/_product_row.html" with p=item.product stock=item.stock reorder_level=item.reorder_level max_stock=item.max_stock %}
       {% empty %}
       <tr><td colspan="8">
         <div class="empty-state">No products found.</div>

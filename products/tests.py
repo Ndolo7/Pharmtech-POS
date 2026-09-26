@@ -2611,6 +2611,7 @@ class ProductEditBranchStockTests(TestCase):
             branch=other_branch,
             quantity=10,
             reorder_level=5,
+            max_stock=50,
         )
 
         response = self.client.post(
@@ -2621,7 +2622,7 @@ class ProductEditBranchStockTests(TestCase):
                 "unit_price": str(self.product.unit_price),
                 "cost_price": str(self.product.cost_price),
                 "reorder_level": "20",
-                "max_stock": str(self.product.max_stock),
+                "max_stock": "80",
                 "pack_quantity": str(self.product.pack_quantity),
                 "stock_quantity": str(self.stock.quantity),
                 "branch_id": str(self.branch.id),
@@ -2635,6 +2636,9 @@ class ProductEditBranchStockTests(TestCase):
         self.assertEqual(self.product.reorder_level, 5)
         self.assertEqual(self.stock.reorder_level, 20)
         self.assertEqual(other_stock.reorder_level, 5)
+        self.assertEqual(self.product.max_stock, 50)
+        self.assertEqual(self.stock.max_stock, 80)
+        self.assertEqual(other_stock.max_stock, 50)
 
 
 

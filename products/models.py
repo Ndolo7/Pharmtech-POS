@@ -212,6 +212,12 @@ class Stock(models.Model):
         default=None,
         help_text="Branch-specific reorder threshold. Falls back to the product default when unset.",
     )
+    max_stock = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Branch-specific maximum stock. Falls back to the product default when unset.",
+    )
     exempt_from_auto_reorder = models.BooleanField(
         default=False,
         help_text=(
@@ -230,6 +236,10 @@ class Stock(models.Model):
     @property
     def effective_reorder_level(self):
         return self.reorder_level if self.reorder_level is not None else self.product.reorder_level
+
+    @property
+    def effective_max_stock(self):
+        return self.max_stock if self.max_stock is not None else self.product.max_stock
 
 
 class StockMovement(models.Model):
